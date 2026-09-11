@@ -31,6 +31,10 @@ export type ResolvedCheck = {
    */
   exclude: string[];
   /**
+   * where the check's files come from
+   */
+  filesSource: "modules" | "glob";
+  /**
    * whether a path is one to lint
    */
   isWanted: (file: string) => boolean;

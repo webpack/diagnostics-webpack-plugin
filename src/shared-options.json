@@ -33,7 +33,7 @@
       ]
     },
     "files": {
-      "description": "Specify the files and/or directories to traverse. Must be relative to `options.context`.",
+      "description": "Specify directories, files, or globs to check. Naming them checks every file they match, whether or not webpack built it; left unset, a check reads whatever it reads by itself.",
       "anyOf": [
         {
           "type": "string"

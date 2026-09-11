@@ -221,6 +221,12 @@ Specify directories, files, or globs. Must be relative to `options.context`.
 Directories are traversed recursively looking for files matching `options.extensions`.
 File and glob patterns ignore `options.extensions`.
 
+Naming them says what to check, so every file they match is checked whether or
+not webpack built it — a module nothing imports yet, or one reached through a
+loader webpack resolves differently, is checked all the same. Leave it unset and
+a check reads whatever it reads by itself: ESLint the modules webpack built,
+Stylelint a walk of the context.
+
 In a watch run the folder a check takes its files from is watched, so a file
 you add there is checked without anything else having to change — and for the
 `typescript` check, so is every folder the `tsconfig.json` `include` covers. A
