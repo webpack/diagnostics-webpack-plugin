@@ -335,15 +335,25 @@ function check(ts, options, held) {
     : [];
 
   const ignored = new Set(options.ignoreDiagnostics || []);
+  // What the config file itself is wrong about is reported whatever else is
+  // turned off: nothing below it would be answering the right question.
+  const kinds = {
+    syntactic: true,
+    semantic: true,
+    declaration: true,
+    global: true,
+    ...options.diagnosticOptions,
+  };
   const diagnostics = [
     ...unrecoverable,
     ...ts.sortAndDeduplicateDiagnostics([
       ...program.getConfigFileParsingDiagnostics(),
       ...program.getOptionsDiagnostics(),
-      ...held.program.getSyntacticDiagnostics(),
-      ...program.getGlobalDiagnostics(),
-      ...held.program.getSemanticDiagnostics(),
-      ...(parsed.options.declaration || parsed.options.composite
+      ...(kinds.syntactic ? held.program.getSyntacticDiagnostics() : []),
+      ...(kinds.global ? program.getGlobalDiagnostics() : []),
+      ...(kinds.semantic ? held.program.getSemanticDiagnostics() : []),
+      ...(kinds.declaration &&
+      (parsed.options.declaration || parsed.options.composite)
         ? program.getDeclarationDiagnostics()
         : []),
     ]),

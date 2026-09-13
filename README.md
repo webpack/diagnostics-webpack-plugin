@@ -88,27 +88,27 @@ Every check to run is an entry in `checks`, named by its `use`. The list may nam
 
 ### Every option
 
-| Option                                                                                         | Layer  | What it decides                                                              |
-| :--------------------------------------------------------------------------------------------- | :----- | :--------------------------------------------------------------------------- |
-| [`checks`](#checks)                                                                            | Plugin | Which checks run, and the options only each of them understands.             |
-| [`context`](#context)                                                                          | Plugin | The folder every relative `files` and `exclude` pattern is resolved against. |
-| [`lintOnStart`](#lintonstart)                                                                  | Plugin | Whether the first compilation checks everything it covers.                   |
-| [`cache`](#cache)                                                                              | Shared | Whether the tool keeps a cache of its own between runs.                      |
-| [`cacheLocation`](#cachelocation)                                                              | Shared | Where that cache is written.                                                 |
-| [`exclude`](#exclude)                                                                          | Shared | What is left out.                                                            |
-| [`extensions`](#extensions)                                                                    | Shared | Which extensions a named folder is walked for.                               |
-| [`files`](#files)                                                                              | Shared | What to check: naming it checks every file it matches, built or not.         |
-| [`fix`](#fix)                                                                                  | Shared | Whether the tool writes back what it can fix.                                |
-| [`formatter`](#formatter)                                                                      | Shared | How results are turned into the message that is reported.                    |
-| [`outputReport`](#outputreport)                                                                | Shared | A file the same results are written to.                                      |
-| [`reportAs`](#reportas)                                                                        | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
-| [`resourceQueryExclude`](#resourcequeryexclude)                                                | Shared | Which module queries are left out.                                           |
-| [`threads`](#threads)                                                                          | Shared | How wide the work is spread.                                                 |
-| [`configType`, `eslintPath`](#eslint)                                                          | Check  | ESLint's own.                                                                |
-| [`stylelintPath`](#stylelint)                                                                  | Check  | Stylelint's own.                                                             |
-| [`oxlintPath`, `configFile`, `args`](#oxlint)                                                  | Check  | oxlint's own.                                                                |
-| [`biomePath`, `command`, `configFile`, `args`](#biome)                                         | Check  | Biome's own.                                                                 |
-| [`typescriptPath`, `configFile`, `compilerOptions`, `build`, `ignoreDiagnostics`](#typescript) | Check  | TypeScript's own.                                                            |
+| Option                                                                                                              | Layer  | What it decides                                                              |
+| :------------------------------------------------------------------------------------------------------------------ | :----- | :--------------------------------------------------------------------------- |
+| [`checks`](#checks)                                                                                                 | Plugin | Which checks run, and the options only each of them understands.             |
+| [`context`](#context)                                                                                               | Plugin | The folder every relative `files` and `exclude` pattern is resolved against. |
+| [`lintOnStart`](#lintonstart)                                                                                       | Plugin | Whether the first compilation checks everything it covers.                   |
+| [`cache`](#cache)                                                                                                   | Shared | Whether the tool keeps a cache of its own between runs.                      |
+| [`cacheLocation`](#cachelocation)                                                                                   | Shared | Where that cache is written.                                                 |
+| [`exclude`](#exclude)                                                                                               | Shared | What is left out.                                                            |
+| [`extensions`](#extensions)                                                                                         | Shared | Which extensions a named folder is walked for.                               |
+| [`files`](#files)                                                                                                   | Shared | What to check: naming it checks every file it matches, built or not.         |
+| [`fix`](#fix)                                                                                                       | Shared | Whether the tool writes back what it can fix.                                |
+| [`formatter`](#formatter)                                                                                           | Shared | How results are turned into the message that is reported.                    |
+| [`outputReport`](#outputreport)                                                                                     | Shared | A file the same results are written to.                                      |
+| [`reportAs`](#reportas)                                                                                             | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
+| [`resourceQueryExclude`](#resourcequeryexclude)                                                                     | Shared | Which module queries are left out.                                           |
+| [`threads`](#threads)                                                                                               | Shared | How wide the work is spread.                                                 |
+| [`configType`, `eslintPath`](#eslint)                                                                               | Check  | ESLint's own.                                                                |
+| [`stylelintPath`](#stylelint)                                                                                       | Check  | Stylelint's own.                                                             |
+| [`oxlintPath`, `configFile`, `args`](#oxlint)                                                                       | Check  | oxlint's own.                                                                |
+| [`biomePath`, `command`, `configFile`, `args`](#biome)                                                              | Check  | Biome's own.                                                                 |
+| [`typescriptPath`, `configFile`, `compilerOptions`, `build`, `diagnosticOptions`, `ignoreDiagnostics`](#typescript) | Check  | TypeScript's own.                                                            |
 
 Anything else written in a `checks` entry is handed to the tool itself, so its
 own Node.js API options go next to these.
@@ -808,6 +808,41 @@ that fails is never up to date. Pair it with
 [`reportAs: "log"`](#reportas) if you would rather a watch rebuild did not wait
 for that.
 
+### `diagnosticOptions`
+
+- Type:
+
+```ts
+interface diagnosticOptions {
+  syntactic?: boolean | undefined;
+  semantic?: boolean | undefined;
+  declaration?: boolean | undefined;
+  global?: boolean | undefined;
+}
+```
+
+- Default: every kind reported
+
+Which kinds of diagnostic to report. Turning one off asks TypeScript for less
+rather than dropping what it answered, so it is also the one filter that saves
+the work — `semantic: false` is what makes a check that only wants syntax errors
+cheap.
+
+```js
+new DiagnosticsPlugin({
+  // webpack's own parser reports a syntax error in a file it builds
+  checks: [{ use: "typescript", diagnosticOptions: { syntactic: false } }],
+});
+```
+
+What the `tsconfig.json` itself is wrong about is reported whatever is turned
+off here: with the config file misread, nothing below it would be answering the
+right question. [`build`](#build) reports the whole of what it finds either way,
+since a solution is built rather than asked kind by kind.
+
+`fork-ts-checker-webpack-plugin` spells this option the same way, with
+`semantic` alone on by default.
+
 ### `ignoreDiagnostics`
 
 - Type:
@@ -1035,7 +1070,7 @@ rather than the project again. What that costs and saves is under
 | `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                 |
 | `typescript.mode`                   | Not an option: nothing is written without `build`, and `build` writes the declarations a referenced project publishes and nothing else.                                              |
 | `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                  |
-| `typescript.diagnosticOptions`      | No switch per kind; [`ignoreDiagnostics`](#ignorediagnostics) leaves out the codes you name.                                                                                         |
+| `typescript.diagnosticOptions`      | [`diagnosticOptions`](#diagnosticoptions), spelled the same way. Every kind is reported here unless you turn one off; there, only `semantic` is on to begin with.                    |
 | `issue.include`, `issue.exclude`    | [`files`](#files) and [`exclude`](#exclude) choose the files, [`ignoreDiagnostics`](#ignorediagnostics) the codes. A predicate of your own has no equivalent.                        |
 | `formatter`                         | [`formatter`](#formatter). Unset, TypeScript's own formatter is used, with color and the source line.                                                                                |
 | `logger`                            | Webpack's logger is what the plugin writes to; `reportAs: "log"` is what sends results there rather than onto the compilation.                                                       |

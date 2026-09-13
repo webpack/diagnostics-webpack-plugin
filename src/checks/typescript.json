@@ -24,6 +24,25 @@
     "build": {
       "description": "Build the projects the config file references first, the way `tsc -b` does, and report what the whole solution finds.",
       "type": "boolean"
+    },
+    "diagnosticOptions": {
+      "description": "Which kinds of diagnostic to report. Every kind is reported unless it is turned off here; `build` reports the whole of what it finds either way.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "syntactic": {
+          "type": "boolean"
+        },
+        "semantic": {
+          "type": "boolean"
+        },
+        "declaration": {
+          "type": "boolean"
+        },
+        "global": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }
