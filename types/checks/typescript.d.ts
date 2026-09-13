@@ -21,7 +21,16 @@ export type Diagnostic = EXPECTED_ANY;
 /**
  * What one compilation leaves for the next: the files it parsed, the host that
  * hands them back, and the program that type checked them.
+ * What a run of the check answers with: what it found, and what a watcher has
+ * to follow for it to answer the same way again.
  */
+export type Found = {
+  diagnostics: Diagnostic[];
+  host: EXPECTED_ANY;
+  files: string[];
+  directories: string[];
+  writes: string[];
+};
 export type Held = {
   signature: string;
   files: Map<string, EXPECTED_ANY>;

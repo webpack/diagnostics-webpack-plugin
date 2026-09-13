@@ -25,3 +25,6 @@ Thumbs.db
 *.sublime-project
 *.sublime-workspace
 *.iml
+
+/test/typescript/fixtures/references/*/dist
+/test/typescript/fixtures/references/*/*.tsbuildinfo

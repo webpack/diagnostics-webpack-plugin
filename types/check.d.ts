@@ -11,6 +11,7 @@ export type Dependencies = {
   read: string[];
   directories: string[];
   missing: string[];
+  writes: string[];
 };
 export type Report = Dependencies & {
   errors?: DiagnosticError;

@@ -17,6 +17,12 @@ import { importFrom, omitPluginOptions } from "../utils.js";
 /**
  * What one compilation leaves for the next: the files it parsed, the host that
  * hands them back, and the program that type checked them.
+ * What a run of the check answers with: what it found, and what a watcher has
+ * to follow for it to answer the same way again.
+ * @typedef {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[], writes: string[] }} Found
+ */
+
+/**
  * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY }} Held
  */
 
@@ -157,12 +163,90 @@ function getTypeScriptOptions(options) {
 }
 
 /**
+ * Every project a config file references, built the way `tsc -b` does — which
+ * is what a reference is for: a project reads the declarations of the one it
+ * references rather than its sources.
+ * @param {TypeScript} ts the loaded TypeScript
+ * @param {Options} options options
+ * @param {string} configFile the config file describing the solution
+ * @param {EXPECTED_ANY} host the host diagnostics are formatted against
+ * @param {Diagnostic[]} unrecoverable what reading the config file itself failed with
+ * @returns {Found} what it found, and what it read to find it
+ */
+function buildSolution(ts, options, configFile, host, unrecoverable) {
+  /** @type {Diagnostic[]} */
+  const diagnostics = [...unrecoverable];
+  const files = [configFile];
+  /** @type {string[]} */
+  const directories = [];
+  /** @type {string[]} */
+  const writes = [];
+
+  const overrides = {
+    ...getTypeScriptOptions(options),
+    ...options.compilerOptions,
+  };
+  const builderHost = ts.createSolutionBuilderHost(
+    ts.sys,
+    ts.createSemanticDiagnosticsBuilderProgram,
+    (/** @type {Diagnostic} */ diagnostic) => diagnostics.push(diagnostic),
+    () => {},
+    () => {},
+  );
+  const builder = ts.createSolutionBuilder(builderHost, [configFile], {
+    ...overrides,
+    // The declarations are what the next project reads; the JavaScript is
+    // webpack's to write, and a later `tsc -b` still writes its own.
+    emitDeclarationOnly: true,
+  });
+  const order = builder.getBuildOrder();
+
+  // Read before the build, so that a project it stops short of is watched too.
+  for (const project of Array.isArray(order) ? order : order.buildOrder) {
+    const parsed = ts.getParsedCommandLineOfConfigFile(project, overrides, {
+      ...ts.sys,
+      getCurrentDirectory: () => String(options.context),
+      onUnRecoverableConfigFileDiagnostic: (
+        /** @type {Diagnostic} */ diagnostic,
+      ) => diagnostics.push(diagnostic),
+    });
+
+    if (!parsed) continue;
+
+    files.push(project, ...parsed.fileNames);
+    directories.push(...Object.keys(parsed.wildcardDirectories || {}));
+
+    for (const written of [
+      parsed.options.outDir,
+      parsed.options.declarationDir,
+      parsed.options.tsBuildInfoFile,
+    ]) {
+      if (written) writes.push(String(written));
+    }
+  }
+
+  builder.build();
+
+  const ignored = new Set(options.ignoreDiagnostics || []);
+
+  return {
+    diagnostics: diagnostics.filter(
+      (diagnostic) => !ignored.has(diagnostic.code),
+    ),
+    host,
+    files,
+    directories,
+    writes,
+  };
+}
+
+/**
  * The program the config file describes, with emit off: webpack writes the
  * output, so a check that wrote any of its own would fight it.
  * @param {TypeScript} ts the loaded TypeScript
  * @param {Options} options options
  * @param {Held} held what the last compilation left behind
- * @returns {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[] }} what it found, and what it read to find it
+ * @returns {Found} what it found, and what it read to find it
  */
 function check(ts, options, held) {
   const context = String(options.context);
@@ -187,6 +271,12 @@ function check(ts, options, held) {
     );
   }
 
+  // A solution is built rather than read: the projects it references have to
+  // publish their declarations before the ones reading them can be checked.
+  if (options.build) {
+    return buildSolution(ts, options, configFile, host, unrecoverable);
+  }
+
   const overrides = {
     ...getTypeScriptOptions(options),
     ...options.compilerOptions,
@@ -208,6 +298,7 @@ function check(ts, options, held) {
       host,
       files: [configFile],
       directories: [],
+      writes: [],
     };
   }
 
@@ -272,6 +363,7 @@ function check(ts, options, held) {
     // What `include` covers, which is where a file the program has never held
     // can appear.
     directories: Object.keys(parsed.wildcardDirectories || {}),
+    writes: [],
   };
 }
 
@@ -294,6 +386,8 @@ async function create({ key, options, compilation }) {
   let read = [];
   /** @type {string[]} */
   let directories = [];
+  /** @type {string[]} */
+  let writes = [];
   // The program is the whole project, so it is built once however many batches
   // of files the plugin hands over.
   let checked = false;
@@ -309,6 +403,7 @@ async function create({ key, options, compilation }) {
       host = found.host;
       read = found.files;
       directories = found.directories;
+      writes = found.writes;
 
       return found.diagnostics;
     },
@@ -317,6 +412,9 @@ async function create({ key, options, compilation }) {
     },
     readDirectories() {
       return directories;
+    },
+    writesTo() {
+      return writes;
     },
     missingFiles() {
       return [...held.missing];

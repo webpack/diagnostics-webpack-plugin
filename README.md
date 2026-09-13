@@ -632,6 +632,9 @@ new DiagnosticsPlugin({
 });
 ```
 
+Project references are read rather than built unless [`build`](#build) says
+otherwise, which is what a `tsconfig.json` listing only `references` needs.
+
 Two things differ from the linters. A diagnostic belongs to the program rather
 than to one file, so there is nothing to report a single file from —
 [`threads`](#threads) is not honoured either, since TypeScript spreads its own
@@ -685,6 +688,41 @@ type compilerOptions = object;
 Compiler options overriding the ones the config file sets. The same as writing
 them at the top level of the check, and useful when a name collides with one of
 the plugin's own.
+
+### `build`
+
+- Type:
+
+```ts
+type build = boolean;
+```
+
+- Default: `false`
+
+Build the projects the config file references before reporting, the way
+`tsc -b` does. A `tsconfig.json` that only lists `references` describes an
+empty program of its own, so without this a solution reports nothing at all;
+with it, every project in the graph is checked in the order its references
+say.
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "typescript", build: true }],
+});
+```
+
+A reference is read through the declarations the referenced project publishes,
+so building one is how the next is checked at all — the build therefore writes
+each project's `.d.ts` and its `.tsbuildinfo`, and nothing else. The JavaScript
+stays webpack's to write: a later `tsc -b` of your own still emits it.
+
+The cost is a `tsc -b` pass rather than the kept program the check uses
+otherwise. Over five projects and 205 files: 573 ms with nothing built yet,
+4–8 ms when the solution is up to date, 258 ms after one file changed, and
+around 200 ms on every rebuild for as long as an error stands, since a project
+that fails is never up to date. Pair it with
+[`reportAs: "log"`](#reportas) if you would rather a watch rebuild did not wait
+for that.
 
 ### `ignoreDiagnostics`
 
