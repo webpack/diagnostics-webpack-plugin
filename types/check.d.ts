@@ -1,4 +1,5 @@
 export default createCheckRunner;
+export type EXPECTED_ANY = any;
 export type Compilation = import("webpack").Compilation;
 export type CheckResult = import("./checks/index.js").CheckResult;
 export type CheckInstance = import("./checks/index.js").CheckInstance;
@@ -12,6 +13,9 @@ export type Dependencies = {
   directories: string[];
   missing: string[];
   writes: string[];
+};
+export type Run = Dependencies & {
+  results: CheckResult[];
 };
 export type Report = Dependencies & {
   errors?: DiagnosticError;

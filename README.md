@@ -165,6 +165,20 @@ This is worth doing when something else already lints the same files — a CI jo
 running `eslint .`, or an editor — and the release build need not pay for it
 twice.
 
+#### Two configurations at once
+
+A client and a server configuration lint the same sources twice. Where two
+compilers run a check configured the same way over the same files — the whole
+of it for a check reading from the file system, whatever they both built for
+one reading the module graph — the second joins the run the first is making
+rather than starting its own, and both compilations report what it finds and
+watch what it read.
+
+Over three hundred files with the `typescript` check, two compilers build one
+program rather than two: 1.52 s rather than 1.79 s, and 248 MB rather than
+298 MB. What a compiler checks alone it still checks alone, and a check
+configured differently in the second configuration runs on its own.
+
 ### Shared options
 
 These can be set at the top level, where they apply to every check, or inside one check, where they apply to that check alone.

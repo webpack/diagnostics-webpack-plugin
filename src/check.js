@@ -1,3 +1,6 @@
+// eslint-disable-next-line jsdoc/reject-any-type
+/** @typedef {any} EXPECTED_ANY */
+
 import { isAbsolute, join } from "node:path";
 
 import DiagnosticError from "./DiagnosticError.js";
@@ -10,6 +13,7 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {import("./options.js").EnabledCheck} EnabledCheck */
 /** @typedef {{ filePath: string, content: string }} OutputReportContent */
 /** @typedef {{ read: string[], directories: string[], missing: string[], writes: string[] }} Dependencies */
+/** @typedef {Dependencies & { results: CheckResult[] }} Run */
 /** @typedef {Dependencies & { errors?: DiagnosticError, warnings?: DiagnosticError, outputReport?: OutputReportContent }} Report */
 /** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report>, detach: (report: Promise<Report>) => void }} Runner */
 /** @typedef {Map<string, CheckResult | undefined>} ResultStore */
@@ -19,6 +23,52 @@ const resultStores = new WeakMap();
 
 /** @type {WeakMap<Compilation["compiler"], Map<string, Promise<void>>>} */
 const detachedReports = new WeakMap();
+
+// A run of a check that is still going, so that two compilers over the same
+// files drive the tool once. It is kept only while it runs: what comes after
+// belongs to the store of the compiler that made it.
+/** @type {Map<string, Promise<Run>>} */
+const sharedRuns = new Map();
+
+// What only decides which files are checked, or how what is found is reported.
+// The files are part of the key already, and the rest is not the tool's.
+const NOT_SHARED = new Set([
+  "exclude",
+  "extensions",
+  "files",
+  "formatter",
+  "outputReport",
+  "reportAs",
+  "resourceQueryExclude",
+]);
+
+/**
+ * What tells one check's run of a tool from another's, so that only two runs
+ * that would do the same work are shared.
+ * @param {string} name the name of the check
+ * @param {EnabledCheck["options"]} options the options it runs under
+ * @returns {string | undefined} the key, or nothing when they cannot be compared
+ */
+function sharingKey(name, options) {
+  /** @type {{ [option: string]: EXPECTED_ANY }} */
+  const kept = {};
+
+  for (const [option, value] of Object.entries(options)) {
+    if (!NOT_SHARED.has(option)) kept[option] = value;
+  }
+
+  try {
+    return `${name}\0${JSON.stringify(kept, (_, value) =>
+      typeof value === "function" || value instanceof RegExp
+        ? String(value)
+        : value,
+    )}`;
+  } catch {
+    // Options that cannot be written down are not options two runs can be
+    // told apart by.
+    return undefined;
+  }
+}
 
 /**
  * The results of the last compilation, so a rebuild lints what webpack rebuilt
@@ -133,9 +183,48 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
   /** @type {Set<string>} */
   const read = new Set();
   /** @type {Set<string>} */
+  const directories = new Set();
+  /** @type {Set<string>} */
+  const missing = new Set();
+  /** @type {Set<string>} */
+  const writes = new Set();
+  const sharing = sharingKey(name, options);
+  /** @type {Set<string>} */
   const linted = new Set();
   // A check that cannot lint fails the same way for every batch it is given.
   let failed = false;
+
+  /**
+   * What the check answers with, and what it says it read to answer — taken
+   * together because a run another compiler joins is the only place the second
+   * one can learn either.
+   * @param {CheckInstance} instance the check to run
+   * @param {string[]} files the files to lint
+   * @returns {Promise<Run>} what that run of it found
+   */
+  function run(instance, files) {
+    const key = sharing && `${sharing}\0${files.toSorted().join("\0")}`;
+    const running = key ? sharedRuns.get(key) : undefined;
+
+    if (running) return running;
+
+    const started = instance.lintFiles(files).then((results) => ({
+      results,
+      read: instance.readFiles ? instance.readFiles() : [],
+      directories: instance.readDirectories ? instance.readDirectories() : [],
+      missing: instance.missingFiles ? instance.missingFiles() : [],
+      writes: instance.writesTo ? instance.writesTo() : [],
+    }));
+
+    if (key) {
+      const forget = () => sharedRuns.delete(key);
+
+      sharedRuns.set(key, started);
+      started.then(forget, forget);
+    }
+
+    return started;
+  }
 
   /**
    * @param {string[]} files files
@@ -151,7 +240,20 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
 
     rawResults.push(
       pending
-        .then((instance) => (instance ? instance.lintFiles(files) : []))
+        .then(async (instance) => {
+          if (!instance) return [];
+
+          const outcome = await run(instance, files);
+
+          for (const file of outcome.read) read.add(file);
+          for (const directory of outcome.directories) {
+            directories.add(directory);
+          }
+          for (const file of outcome.missing) missing.add(file);
+          for (const path of outcome.writes) writes.add(path);
+
+          return outcome.results;
+        })
         .catch((err) => {
           if (!failed) {
             failed = true;
@@ -242,10 +344,9 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
      */
     const dependencies = () => ({
       read: [...read],
-      directories:
-        instance && instance.readDirectories ? instance.readDirectories() : [],
-      missing: instance && instance.missingFiles ? instance.missingFiles() : [],
-      writes: instance && instance.writesTo ? instance.writesTo() : [],
+      directories: [...directories],
+      missing: [...missing],
+      writes: [...writes],
     });
 
     if (!instance) return dependencies();
@@ -254,9 +355,24 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
     const raw = await flatten(rawResults.splice(0));
 
     // A check reading more than it was handed — a config file, a project the
-    // graph does not describe — says so before anything is released.
+    // graph does not describe — says so before anything is released. A run
+    // this one joined has already said it for both of them.
     if (instance.readFiles) {
       for (const file of instance.readFiles()) read.add(file);
+    }
+
+    if (instance.readDirectories) {
+      for (const directory of instance.readDirectories()) {
+        directories.add(directory);
+      }
+    }
+
+    if (instance.missingFiles) {
+      for (const file of instance.missingFiles()) missing.add(file);
+    }
+
+    if (instance.writesTo) {
+      for (const path of instance.writesTo()) writes.add(path);
     }
 
     await instance.cleanup();
