@@ -61,6 +61,10 @@ export type CheckInstance = {
    */
   missingFiles?: (() => string[]) | undefined;
   /**
+   * the paths the check itself writes, which are watched by nothing so that a build is not its own trigger
+   */
+  writesTo?: (() => string[]) | undefined;
+  /**
    * loads a formatter, falling back to the tool's default one
    */
   getFormatter: (formatter?: FormatterOption) => Promise<Format>;
@@ -179,6 +183,7 @@ export type CheckAdapter = {
  * @property {(() => string[])=} readFiles the files the check read beyond the ones it was handed, so that a watcher picks up a change to them
  * @property {(() => string[])=} readDirectories the directories the check takes its files from, so that a file appearing in one is picked up
  * @property {(() => string[])=} missingFiles the files the check looked for and did not find, so that creating one is picked up
+ * @property {(() => string[])=} writesTo the paths the check itself writes, which are watched by nothing so that a build is not its own trigger
  * @property {(formatter?: FormatterOption) => Promise<Format>} getFormatter loads a formatter, falling back to the tool's default one
  * @property {() => Promise<void>} cleanup releases whatever the tool holds after a run
  */

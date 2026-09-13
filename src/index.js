@@ -120,15 +120,21 @@ function globRoots({ adapter, wanted }) {
  * directory to hand it.
  * @param {string} directory a directory a check reads from
  * @param {Compiler} compiler compiler
- * @param {(file: string) => boolean} isExcluded whether a path is left out
+ * @param {ResolvedCheck} check the check that reads it
+ * @param {string[]} writes the paths the check itself writes
  * @returns {boolean} whether the whole of it can be watched
  */
-function canWatch(directory, compiler, isExcluded) {
-  if (contains(directory, compiler.outputPath)) return false;
+function canWatch(directory, compiler, check, writes) {
+  const written = [compiler.outputPath, ...writes];
+
+  if (written.some((path) => contains(directory, path))) return false;
 
   try {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isDirectory() && isExcluded(join(directory, entry.name))) {
+      if (
+        entry.isDirectory() &&
+        check.isExcluded(join(directory, entry.name))
+      ) {
         return false;
       }
     }
@@ -313,8 +319,8 @@ class DiagnosticsWebpackPlugin {
       runner.detach(report);
 
       report.then(
-        ({ errors, warnings, read, missing, directories }) => {
-          readLast.set(name, { read, missing, directories });
+        ({ errors, warnings, read, missing, directories, writes }) => {
+          readLast.set(name, { read, missing, directories, writes });
 
           if (generation !== mine) return;
 
@@ -472,7 +478,7 @@ class DiagnosticsWebpackPlugin {
            * @param {ResolvedCheck} check the check that read them
            * @param {Dependencies} dependencies what a run of it read
            */
-          const watch = (check, { read, missing, directories }) => {
+          const watch = (check, { read, missing, directories, writes }) => {
             // Each one is spelled the way the platform does: a watcher looks a
             // change up under the path it joined, not the one it was given.
             for (const file of read) {
@@ -490,7 +496,7 @@ class DiagnosticsWebpackPlugin {
             // A file that does not exist yet is under no watch of its own, so
             // the directory a check would find it in answers for it.
             const roots = [...globRoots(check), ...directories].filter(
-              (directory) => canWatch(directory, compiler, check.isExcluded),
+              (directory) => canWatch(directory, compiler, check, writes),
             );
 
             for (const directory of roots) {
@@ -534,9 +540,10 @@ class DiagnosticsWebpackPlugin {
               read,
               missing,
               directories,
+              writes,
             } = report;
 
-            readLast.set(name, { read, missing, directories });
+            readLast.set(name, { read, missing, directories, writes });
             watch(check, report);
 
             // `reportAs` has already dropped whatever it reports as `false`,

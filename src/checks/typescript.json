@@ -20,6 +20,10 @@
       "items": {
         "type": "number"
       }
+    },
+    "build": {
+      "description": "Build the projects the config file references first, the way `tsc -b` does, and report what the whole solution finds.",
+      "type": "boolean"
     }
   }
 }
