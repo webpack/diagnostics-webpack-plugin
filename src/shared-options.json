@@ -61,6 +61,69 @@
         }
       ]
     },
+    "ignoreDiagnostics": {
+      "description": "What not to report. A number is a TypeScript code, a string the rule or code a check names, and an object matches a file, a code and a severity together; a list holds any of them, and a function is given each one and answers whether to leave it out.",
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "description": "A glob the file it was found in matches, relative to `options.context`.",
+              "type": "string"
+            },
+            "code": {
+              "description": "The rule or the code it came from, as the check names it.",
+              "type": "string"
+            },
+            "severity": {
+              "description": "The severity the check gave it.",
+              "enum": ["error", "warning"]
+            }
+          }
+        },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "file": {
+                    "description": "A glob the file it was found in matches, relative to `options.context`.",
+                    "type": "string"
+                  },
+                  "code": {
+                    "description": "The rule or the code it came from, as the check names it.",
+                    "type": "string"
+                  },
+                  "severity": {
+                    "description": "The severity the check gave it.",
+                    "enum": ["error", "warning"]
+                  }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "instanceof": "Function"
+        }
+      ]
+    },
     "outputReport": {
       "description": "Write the output of the errors to a file, for example a checkstyle xml file for use for reporting on Jenkins CI.",
       "anyOf": [

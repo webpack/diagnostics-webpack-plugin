@@ -456,6 +456,69 @@ check holds the thread the build runs on. A report a newer rebuild has already
 overtaken is dropped, and a check never has two of its runs going at once — the
 next starts when the last has reported.
 
+#### `ignoreDiagnostics`
+
+- Type:
+
+```ts
+type ignoreDiagnostics =
+  IgnoreOne | IgnoreOne[] | ((message: Message) => boolean);
+
+type IgnoreOne = number | string | IgnoreMatch;
+
+interface IgnoreMatch {
+  file?: string | undefined;
+  code?: string | undefined;
+  severity?: "error" | "warning" | undefined;
+}
+
+interface Message {
+  file?: string | undefined;
+  code?: string | undefined;
+  severity: "error" | "warning";
+  text: string;
+}
+```
+
+- Default: unset
+
+What not to report. A linter's rule can be turned off in its own configuration
+and a TypeScript diagnostic cannot, so this is where one thing a check found is
+left out whichever check found it — for adopting a check on a project that is
+not clean yet, without turning the check off altogether.
+
+| Written as                 | Leaves out                                             |
+| :------------------------- | :----------------------------------------------------- |
+| `2307`                     | The TypeScript code, as `tsc` prints it after `TS`.    |
+| `"no-unused-vars"`         | The rule or code a check names.                        |
+| `{ file, code, severity }` | What all three match; one left out matches everything. |
+| `[…]`                      | Anything the list matches.                             |
+| `(message) => boolean`     | Whatever the function answers `true` for.              |
+
+```js
+new DiagnosticsPlugin({
+  checks: [
+    // TS2307 is `Cannot find module`, TS7016 an untyped dependency
+    { use: "typescript", ignoreDiagnostics: [2307, 7016] },
+    // a rule that has not been dealt with in one folder yet
+    {
+      use: "eslint",
+      ignoreDiagnostics: { code: "no-unused-vars", file: "src/legacy/**" },
+    },
+  ],
+});
+```
+
+A `file` is a glob matched against the path relative to
+[`context`](#context), as [`exclude`](#exclude) is. Something a check reported
+of no file in particular — a configuration it could not read — is not a file's
+to leave out, so a match naming one keeps it.
+
+What is left out is left out of everything the check reports, an
+[`outputReport`](#outputreport) included, and of the counts a formatter prints.
+A check shipped outside this package answers for its own results, so it reads
+this option once it says how (see [Adding a check](#adding-a-check)).
+
 #### `outputReport`
 
 - Type:
@@ -843,32 +906,6 @@ since a solution is built rather than asked kind by kind.
 `fork-ts-checker-webpack-plugin` spells this option the same way, with
 `semantic` alone on by default.
 
-### `ignoreDiagnostics`
-
-- Type:
-
-```ts
-type ignoreDiagnostics = number[];
-```
-
-- Default: unset
-
-The codes of the diagnostics not to report, written as `tsc` prints them after
-`TS`. A linter's rule can be turned off in its own configuration; a TypeScript
-diagnostic cannot, so this is where one is left out — for adopting the check on
-a project that does not type check cleanly yet, without turning it off
-altogether.
-
-```js
-new DiagnosticsPlugin({
-  // TS2307 is `Cannot find module`, TS7016 an untyped dependency
-  checks: [{ use: "typescript", ignoreDiagnostics: [2307, 7016] }],
-});
-```
-
-An ignored diagnostic is left out of everything the check reports, an
-[`outputReport`](#outputreport) included.
-
 ## Adding a check
 
 A `use` may also be an adapter of its own rather than a built-in name, so a check can ship as its own package without an entry in this one:
@@ -1060,21 +1097,21 @@ between rebuilds instead, so a rebuild type checks what the change reaches
 rather than the project again. What that costs and saves is under
 [the TypeScript check](#typescript).
 
-| `fork-ts-checker-webpack-plugin`    | Here                                                                                                                                                                                 |
-| :---------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `async`                             | Not an option: a check the compilation carries nothing of — [`reportAs`](#reportas) `"log"` or `false`, with no `outputReport` — is run after a watch rebuild rather than during it. |
-| `typescript.configFile`             | `configFile`, in the entry — see [the TypeScript check](#typescript).                                                                                                                |
-| `typescript.context`                | [`context`](#context), the plugin's own.                                                                                                                                             |
-| `typescript.build`                  | [`build`](#build).                                                                                                                                                                   |
-| `typescript.configOverwrite`        | [`compilerOptions`](#compileroptions), or any compiler option written at the top of the entry.                                                                                       |
-| `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                 |
-| `typescript.mode`                   | Not an option: nothing is written without `build`, and `build` writes the declarations a referenced project publishes and nothing else.                                              |
-| `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                  |
-| `typescript.diagnosticOptions`      | [`diagnosticOptions`](#diagnosticoptions), spelled the same way. Every kind is reported here unless you turn one off; there, only `semantic` is on to begin with.                    |
-| `issue.include`, `issue.exclude`    | [`files`](#files) and [`exclude`](#exclude) choose the files, [`ignoreDiagnostics`](#ignorediagnostics) the codes. A predicate of your own has no equivalent.                        |
-| `formatter`                         | [`formatter`](#formatter). Unset, TypeScript's own formatter is used, with color and the source line.                                                                                |
-| `logger`                            | Webpack's logger is what the plugin writes to; `reportAs: "log"` is what sends results there rather than onto the compilation.                                                       |
-| `devServer`                         | Nothing to set: results reach the compilation, so a dev server overlays them, and `reportAs: "log"` keeps them off it.                                                               |
+| `fork-ts-checker-webpack-plugin`    | Here                                                                                                                                                                                                                          |
+| :---------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `async`                             | Not an option: a check the compilation carries nothing of — [`reportAs`](#reportas) `"log"` or `false`, with no `outputReport` — is run after a watch rebuild rather than during it.                                          |
+| `typescript.configFile`             | `configFile`, in the entry — see [the TypeScript check](#typescript).                                                                                                                                                         |
+| `typescript.context`                | [`context`](#context), the plugin's own.                                                                                                                                                                                      |
+| `typescript.build`                  | [`build`](#build).                                                                                                                                                                                                            |
+| `typescript.configOverwrite`        | [`compilerOptions`](#compileroptions), or any compiler option written at the top of the entry.                                                                                                                                |
+| `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                                                          |
+| `typescript.mode`                   | Not an option: nothing is written without `build`, and `build` writes the declarations a referenced project publishes and nothing else.                                                                                       |
+| `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                                                           |
+| `typescript.diagnosticOptions`      | [`diagnosticOptions`](#diagnosticoptions), spelled the same way. Every kind is reported here unless you turn one off; there, only `semantic` is on to begin with.                                                             |
+| `issue.include`, `issue.exclude`    | [`ignoreDiagnostics`](#ignorediagnostics), which takes the same match of a file, a code and a severity, or a function of your own. It says what to leave out, so an `include` is written as the `exclude` of everything else. |
+| `formatter`                         | [`formatter`](#formatter). Unset, TypeScript's own formatter is used, with color and the source line.                                                                                                                         |
+| `logger`                            | Webpack's logger is what the plugin writes to; `reportAs: "log"` is what sends results there rather than onto the compilation.                                                                                                |
+| `devServer`                         | Nothing to set: results reach the compilation, so a dev server overlays them, and `reportAs: "log"` keeps them off it.                                                                                                        |
 
 Running it next to a linter is one plugin rather than two, with one place to say
 how what they find is reported:

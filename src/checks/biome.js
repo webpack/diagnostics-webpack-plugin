@@ -3,7 +3,13 @@
 
 import { createRequire } from "node:module";
 
-import { findBinary, groupByFile, runJson, splitBySeverity } from "../cli.js";
+import {
+  filterDiagnostics,
+  findBinary,
+  groupByFile,
+  runJson,
+  splitBySeverity,
+} from "../cli.js";
 
 /** @typedef {import("./index.js").CheckContext} CheckContext */
 /** @typedef {import("./index.js").CheckInstance} CheckInstance */
@@ -111,6 +117,13 @@ async function create({ options }) {
         /** @type {Diagnostic[]} */ (results),
         (diagnostic) => diagnostic.path,
         cwd,
+      );
+    },
+    filterResults(results, keep) {
+      return filterDiagnostics(
+        /** @type {FileResult[]} */ (results),
+        keep,
+        (diagnostic) => diagnostic.category,
       );
     },
     splitResults(results) {

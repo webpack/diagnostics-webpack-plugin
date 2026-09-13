@@ -282,6 +282,34 @@ async function create({ options }) {
 
       return removeIgnoredWarnings(eslint, suppressed);
     },
+    filterResults(results, keep) {
+      /** @type {LintResult[]} */
+      const kept = [];
+
+      for (const file of /** @type {LintResult[]} */ (results)) {
+        const messages = file.messages.filter((message) =>
+          keep({
+            file: file.filePath,
+            code: message.ruleId || undefined,
+            severity: message.severity === 2 ? "error" : "warning",
+            text: message.message,
+          }),
+        );
+
+        if (messages.length === 0) continue;
+
+        kept.push({
+          ...file,
+          messages,
+          errorCount: messages.filter((message) => message.severity === 2)
+            .length,
+          warningCount: messages.filter((message) => message.severity === 1)
+            .length,
+        });
+      }
+
+      return kept;
+    },
     splitResults(results) {
       /** @type {LintResult[]} */
       const errors = [];

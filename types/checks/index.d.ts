@@ -3,6 +3,7 @@ export type EXPECTED_ANY = any;
 export type Compilation = import("webpack").Compilation;
 export type Compiler = import("webpack").Compiler;
 export type CheckOptions = import("../options.js").CheckOptions;
+export type Message = import("../options.js").Message;
 /**
  * A result produced by a check, only the adapter that created it knows its shape.
  */
@@ -64,6 +65,15 @@ export type CheckInstance = {
    * the paths the check itself writes, which are watched by nothing so that a build is not its own trigger
    */
   writesTo?: (() => string[]) | undefined;
+  /**
+   * keeps what a predicate accepts of every result, which is what `ignore` is applied through
+   */
+  filterResults?:
+    | ((
+        results: CheckResult[],
+        keep: (message: Message) => boolean,
+      ) => CheckResult[])
+    | undefined;
   /**
    * loads a formatter, falling back to the tool's default one
    */
@@ -160,6 +170,7 @@ export type CheckAdapter = {
 /** @typedef {import("webpack").Compilation} Compilation */
 /** @typedef {import("webpack").Compiler} Compiler */
 /** @typedef {import("../options.js").CheckOptions} CheckOptions */
+/** @typedef {import("../options.js").Message} Message */
 /**
  * A result produced by a check, only the adapter that created it knows its shape.
  * @typedef {EXPECTED_ANY} CheckResult
@@ -184,6 +195,7 @@ export type CheckAdapter = {
  * @property {(() => string[])=} readDirectories the directories the check takes its files from, so that a file appearing in one is picked up
  * @property {(() => string[])=} missingFiles the files the check looked for and did not find, so that creating one is picked up
  * @property {(() => string[])=} writesTo the paths the check itself writes, which are watched by nothing so that a build is not its own trigger
+ * @property {((results: CheckResult[], keep: (message: Message) => boolean) => CheckResult[])=} filterResults keeps what a predicate accepts of every result, which is what `ignore` is applied through
  * @property {(formatter?: FormatterOption) => Promise<Format>} getFormatter loads a formatter, falling back to the tool's default one
  * @property {() => Promise<void>} cleanup releases whatever the tool holds after a run
  */

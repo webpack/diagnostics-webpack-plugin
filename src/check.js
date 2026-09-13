@@ -1,7 +1,9 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
+
+import picomatch from "picomatch";
 
 import DiagnosticError from "./DiagnosticError.js";
 import { reportedAs } from "./options.js";
@@ -11,6 +13,10 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {import("./checks/index.js").CheckResult} CheckResult */
 /** @typedef {import("./checks/index.js").CheckInstance} CheckInstance */
 /** @typedef {import("./options.js").EnabledCheck} EnabledCheck */
+/** @typedef {import("./options.js").Ignore} Ignore */
+/** @typedef {import("./options.js").IgnoreMatch} IgnoreMatch */
+/** @typedef {import("./options.js").IgnoreOne} IgnoreOne */
+/** @typedef {import("./options.js").Message} Message */
 /** @typedef {{ filePath: string, content: string }} OutputReportContent */
 /** @typedef {{ read: string[], directories: string[], missing: string[], writes: string[] }} Dependencies */
 /** @typedef {Dependencies & { results: CheckResult[] }} Run */
@@ -34,6 +40,7 @@ const sharedRuns = new Map();
 // The files are part of the key already, and the rest is not the tool's.
 const NOT_SHARED = new Set([
   "exclude",
+  "ignoreDiagnostics",
   "extensions",
   "files",
   "formatter",
@@ -113,6 +120,55 @@ function takeDetachedReport(compilation, check) {
   reports.delete(check);
 
   return report;
+}
+
+/**
+ * What one entry of `ignoreDiagnostics` matches, as a predicate over one thing
+ * a check found. What a match leaves out it matches everything of, and a file
+ * is matched as `exclude` matches one: a glob against the path relative to the
+ * context.
+ * @param {IgnoreOne} one what not to report
+ * @param {string} context what a file is named relative to
+ * @returns {(message: Message) => boolean} whether it is what the entry names
+ */
+function matching(one, context) {
+  // A number is the code `tsc` prints after `TS`, which is how `ts-loader`
+  // spells this option too; a string is the rule or code a check names.
+  /** @type {IgnoreMatch} */
+  const match =
+    typeof one === "number"
+      ? { code: `TS${one}` }
+      : typeof one === "string"
+        ? { code: one }
+        : one;
+  const isNamed = match.file ? picomatch(match.file, { dot: true }) : undefined;
+
+  return (message) =>
+    (!match.severity || match.severity === message.severity) &&
+    (!match.code || match.code === message.code) &&
+    // Something the check could not put a file to is not a file's to leave out.
+    (!isNamed ||
+      !message.file ||
+      isNamed(toPosixPath(relative(context, message.file))));
+}
+
+/**
+ * @param {Ignore | undefined} ignore what a check is not to report
+ * @param {string} context what a file is named relative to
+ * @returns {((message: Message) => boolean) | undefined} whether to keep one, when there is anything to leave out
+ */
+function keeping(ignore, context) {
+  if (!ignore) return undefined;
+
+  if (typeof ignore === "function") {
+    return (message) => !ignore(message);
+  }
+
+  const matches = (Array.isArray(ignore) ? ignore : [ignore]).map((one) =>
+    matching(one, context),
+  );
+
+  return (message) => !matches.some((match) => match(message));
 }
 
 /**
@@ -377,7 +433,15 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
 
     await instance.cleanup();
 
-    const results = remember(await instance.getResults(raw));
+    const found = await instance.getResults(raw);
+    const keep = keeping(options.ignoreDiagnostics, String(options.context));
+    // A check shipped outside this package says whether it can leave one of
+    // its results out; one that cannot reports them as it found them.
+    const results = remember(
+      keep && instance.filterResults
+        ? instance.filterResults(found, keep)
+        : found,
+    );
 
     // Do not analyze when the check reported nothing.
     if (!results || results.length === 0) {

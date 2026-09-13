@@ -42,6 +42,18 @@ describe("biome", () => {
     assert.match(message, /twice\.js:3:7/u);
   });
 
+  it("should leave out what ignoreDiagnostics names", async () => {
+    const stats = await pack("bad", {
+      ignoreDiagnostics: ["lint/suspicious/noDebugger"],
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+
+    const [{ message }] = stats.compilation.warnings;
+
+    assert.match(message, /noUnusedVariables/u);
+  });
+
   it("should let reportAs send both to warnings", async () => {
     const stats = await pack("bad", { reportAs: "warning" }).runAsync();
 

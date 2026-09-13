@@ -14,13 +14,6 @@
       "description": "Compiler options to override the ones the config file sets.",
       "type": "object"
     },
-    "ignoreDiagnostics": {
-      "description": "The codes of the diagnostics not to report, as `tsc` prints them after `TS`.",
-      "type": "array",
-      "items": {
-        "type": "number"
-      }
-    },
     "build": {
       "description": "Build the projects the config file references first, the way `tsc -b` does, and report what the whole solution finds.",
       "type": "boolean"
