@@ -10,11 +10,14 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {import("./options.js").EnabledCheck} EnabledCheck */
 /** @typedef {{ filePath: string, content: string }} OutputReportContent */
 /** @typedef {{ read: string[], errors?: DiagnosticError, warnings?: DiagnosticError, outputReport?: OutputReportContent }} Report */
-/** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report> }} Runner */
+/** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report>, detach: (report: Promise<Report>) => void }} Runner */
 /** @typedef {Map<string, CheckResult | undefined>} ResultStore */
 
 /** @type {WeakMap<Compilation["compiler"], Map<string, ResultStore>>} */
 const resultStores = new WeakMap();
+
+/** @type {WeakMap<Compilation["compiler"], Map<string, Promise<void>>>} */
+const detachedReports = new WeakMap();
 
 /**
  * The results of the last compilation, so a rebuild lints what webpack rebuilt
@@ -43,6 +46,25 @@ function getResultStore(compilation, check) {
 }
 
 /**
+ * The report of a run left to finish on its own, taken so that the next run of
+ * the same check waits for it rather than driving a second tool beside it.
+ * @param {Compilation} compilation compilation
+ * @param {string} check a key unique to the check within the compiler
+ * @returns {Promise<void> | undefined} the report still to land, if there is one
+ */
+function takeDetachedReport(compilation, check) {
+  const reports = detachedReports.get(compilation.compiler);
+
+  if (!reports) return undefined;
+
+  const report = reports.get(check);
+
+  reports.delete(check);
+
+  return report;
+}
+
+/**
  * @param {Promise<CheckResult[]>[]} results results
  * @returns {Promise<CheckResult[]>} flattened results
  */
@@ -57,26 +79,50 @@ async function flatten(results) {
 }
 
 /**
- * Creates the check synchronously so that the compilation hooks are tapped
- * before webpack starts building modules, whatever the tool takes to load.
+ * Creates the runner synchronously so that the compilation hooks are tapped
+ * before webpack starts building modules, whatever the tool takes to load. A
+ * run the last compilation left to finish on its own is waited for first, so
+ * that a check never has two of its tools running side by side.
  * @param {string} key a key unique to the compiler the check runs for
  * @param {EnabledCheck} check the check to run
  * @param {Compilation} compilation compilation
  * @returns {Runner} the runner collecting and reporting the results
  */
 function createCheckRunner(key, { name, adapter, options }, compilation) {
-  /** @type {Promise<CheckInstance | null>} */
-  const pending = adapter.create({ key, options, compilation }).catch((err) => {
+  const checkKey = `${key}:${name}`;
+  // A run of this check the last compilation left to finish on its own, which
+  // is holding whatever the tool keeps between runs.
+  const previous = takeDetachedReport(compilation, checkKey);
+  // Left to run on its own rather than reported to the compilation, from where
+  // a failure can no longer reach anyone.
+  let detached = false;
+
+  /**
+   * @param {Error} err what the check failed with
+   */
+  function reportFailure(err) {
+    if (detached) {
+      compilation.compiler.getInfrastructureLogger(key).error(err.message);
+      return;
+    }
+
     compilation.errors.push(new DiagnosticError(name, err.message));
-    return null;
-  });
+  }
+
+  /** @type {Promise<CheckInstance | null>} */
+  const pending = (previous || Promise.resolve())
+    .then(() => adapter.create({ key, options, compilation }))
+    .catch((err) => {
+      reportFailure(err);
+      return null;
+    });
 
   /** @type {Promise<CheckResult[]>[]} */
   const rawResults = [];
   // Every path the store is keyed by goes through `toPosixPath`: webpack hands
   // over a module's resource with the separators the platform uses, and a
   // check answers with whatever its own tool wrote.
-  const store = getResultStore(compilation, `${key}:${name}`);
+  const store = getResultStore(compilation, checkKey);
   // A check that cannot say which file a result came from is linted whole.
   const { resultPath } = adapter;
   /** @type {Set<string>} */
@@ -108,7 +154,7 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
         .catch((err) => {
           if (!failed) {
             failed = true;
-            compilation.errors.push(new DiagnosticError(name, err.message));
+            reportFailure(err);
           }
 
           return [];
@@ -243,7 +289,31 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
     return report;
   }
 
-  return { keep, lint, report };
+  /**
+   * Says the report will not be awaited: a failure goes to the terminal rather
+   * than to a compilation that can no longer carry it.
+   * @param {Promise<Report>} report the report left to land on its own
+   */
+  function detach(report) {
+    detached = true;
+
+    let reports = detachedReports.get(compilation.compiler);
+
+    if (!reports) {
+      reports = new Map();
+      detachedReports.set(compilation.compiler, reports);
+    }
+
+    reports.set(
+      checkKey,
+      report.then(
+        () => {},
+        () => {},
+      ),
+    );
+  }
+
+  return { detach, keep, lint, report };
 }
 
 export default createCheckRunner;

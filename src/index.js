@@ -74,6 +74,23 @@ function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
   return collected;
 }
 
+/**
+ * Whether what a check finds can reach the compilation at all: results it
+ * reports as `false` or as a log do not, and neither does a check whose
+ * `outputReport` nothing writes.
+ * @param {CheckOptions} options options resolved for the check
+ * @returns {boolean} whether the build has to wait for it
+ */
+function isAdvisory(options) {
+  if (options.outputReport && options.outputReport.filePath) return false;
+
+  return /** @type {const} */ (["errors", "warnings"]).every((results) => {
+    const severity = reportedAs(options.reportAs, results);
+
+    return severity === false || severity === "log";
+  });
+}
+
 class DiagnosticsWebpackPlugin {
   /**
    * @param {Options} options options
@@ -200,7 +217,56 @@ class DiagnosticsWebpackPlugin {
 
     if (isCompilerHooked) return;
 
+    // What each check read the last time it reported, so that a rebuild whose
+    // results land after it can still hand the watcher the files they cover.
+    /** @type {Map<string, string[]>} */
+    const readLast = new Map();
+    // A report of an older compilation describes files that have been checked
+    // again since, so it is dropped rather than printed after the newer one.
+    let generation = 0;
+    /** @type {(() => void)[]} */
+    const afterBuild = [];
+
+    // Where a check the build carries nothing of is started: the watcher has
+    // its files by here, and nothing else wants the thread.
+    compiler.hooks.done.tap(this.key, () => {
+      for (const start of afterBuild.splice(0)) start();
+    });
+
+    /**
+     * Leaves a check to finish after the build it was run for and prints what
+     * it found once it does, to the terminal rather than to the stats a build
+     * that is over has already had printed.
+     * @param {string} name the name of the check
+     * @param {Runner} runner the runner to leave running
+     * @param {number} mine which compilation it was run for
+     */
+    const reportLate = (name, runner, mine) => {
+      const report = runner.report();
+
+      runner.detach(report);
+
+      report.then(
+        ({ errors, warnings, read }) => {
+          readLast.set(name, read);
+
+          if (generation !== mine) return;
+
+          const logger = compiler.getInfrastructureLogger(LINT_PLUGIN);
+
+          if (errors) logger.error(errors.message);
+          if (warnings) logger.warn(warnings.message);
+        },
+        (err) => {
+          compiler.getInfrastructureLogger(LINT_PLUGIN).error(err.message);
+        },
+      );
+    };
+
     compiler.hooks.compilation.tap(this.key, (compilation) => {
+      generation += 1;
+
+      const mine = generation;
       // Globbing the file system does not depend on the module graph, so a
       // child compilation would only lint what its parent already did.
       const enabled = compilation.compiler.isChild()
@@ -211,17 +277,35 @@ class DiagnosticsWebpackPlugin {
 
       const runners = enabled.map((check) => {
         const runner = this.createRunner(check, compilation);
+        // A check the build carries nothing of is run after it rather than
+        // beside it, so that it takes the thread when nothing else wants it.
+        // The first compilation is what tells the watcher which files it
+        // reads, and a one-shot build has no later moment to report in.
+        const late =
+          compiler.watchMode &&
+          !compilation.compiler.isChild() &&
+          isAdvisory(check.options) &&
+          readLast.has(check.name);
         /** @type {string[]} */
         const pending = [];
         /** @type {string[]} */
         const kept = [];
         let scheduled = false;
 
+        const handOver = () => {
+          scheduled = false;
+
+          if (pending.length > 0) runner.lint(pending.splice(0));
+          if (kept.length > 0) runner.keep(kept.splice(0));
+        };
+
         // Linting starts while webpack is still building rather than after
         // it. A batch below the threshold waits for the end of the graph: a
         // check that parallelises its own work, as ESLint does under
         // `concurrency`, has nothing to spread across workers before then.
         const flush = (atEnd = false) => {
+          if (late) return;
+
           if (!atEnd) {
             if (scheduled || pending.length < EARLY_BATCH) return;
 
@@ -231,10 +315,7 @@ class DiagnosticsWebpackPlugin {
             return;
           }
 
-          scheduled = false;
-
-          if (pending.length > 0) runner.lint(pending.splice(0));
-          if (kept.length > 0) runner.keep(kept.splice(0));
+          handOver();
         };
 
         return {
@@ -244,6 +325,8 @@ class DiagnosticsWebpackPlugin {
           pending,
           kept,
           flush,
+          handOver,
+          late,
           runner,
         };
       });
@@ -301,8 +384,9 @@ class DiagnosticsWebpackPlugin {
 
         const collected = collectFromFileSystem(compiler, check);
 
-        if (collected.lint.length > 0) check.runner.lint(collected.lint);
-        if (collected.keep.length > 0) check.runner.keep(collected.keep);
+        check.pending.push(...collected.lint);
+        check.kept.push(...collected.keep);
+        check.flush(true);
       }
 
       compilation.hooks.finishModules.tap(this.key, () => {
@@ -316,17 +400,42 @@ class DiagnosticsWebpackPlugin {
           /** @type {Map<string, string[]>} */
           const outputReports = new Map();
 
-          for (const { options, runner } of runners) {
-            const { errors, warnings, outputReport, read } =
-              await runner.report();
-
-            // Webpack watches what it built; a check reads what it was
-            // configured to, which is not always the same set of files. Each
-            // one is spelled the way the platform does: a watcher looks a
+          /**
+           * Webpack watches what it built; a check reads what it was
+           * configured to, which is not always the same set of files.
+           * @param {string[]} read the files a run of a check read
+           */
+          const watch = (read) => {
+            // Each one is spelled the way the platform does: a watcher looks a
             // change up under the path it joined, not the one it was given.
             for (const file of read) {
               compilation.fileDependencies.add(normalize(file));
             }
+          };
+
+          for (const check of runners) {
+            const { name, options, runner } = check;
+
+            // What the build does not wait for is left for once it is over,
+            // with the files the check read the last time it ran: what it
+            // reads this time is not known until it is done, by which point
+            // the watcher has been handed its list.
+            if (check.late) {
+              watch(/** @type {string[]} */ (readLast.get(name)));
+
+              afterBuild.push(() => {
+                check.handOver();
+                reportLate(name, runner, mine);
+              });
+
+              continue;
+            }
+
+            const { errors, warnings, outputReport, read } =
+              await runner.report();
+
+            readLast.set(name, read);
+            watch(read);
 
             // `reportAs` has already dropped whatever it reports as `false`,
             // so what is left only needs putting where it belongs.
