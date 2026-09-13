@@ -686,6 +686,32 @@ Compiler options overriding the ones the config file sets. The same as writing
 them at the top level of the check, and useful when a name collides with one of
 the plugin's own.
 
+### `ignoreDiagnostics`
+
+- Type:
+
+```ts
+type ignoreDiagnostics = number[];
+```
+
+- Default: unset
+
+The codes of the diagnostics not to report, written as `tsc` prints them after
+`TS`. A linter's rule can be turned off in its own configuration; a TypeScript
+diagnostic cannot, so this is where one is left out — for adopting the check on
+a project that does not type check cleanly yet, without turning it off
+altogether.
+
+```js
+new DiagnosticsPlugin({
+  // TS2307 is `Cannot find module`, TS7016 an untyped dependency
+  checks: [{ use: "typescript", ignoreDiagnostics: [2307, 7016] }],
+});
+```
+
+An ignored diagnostic is left out of everything the check reports, an
+[`outputReport`](#outputreport) included.
+
 ## Adding a check
 
 A `use` may also be an adapter of its own rather than a built-in name, so a check can ship as its own package without an entry in this one:

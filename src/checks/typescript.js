@@ -243,6 +243,7 @@ function check(ts, options, held) {
     ? parsed.options.configFile.extendedSourceFiles || []
     : [];
 
+  const ignored = new Set(options.ignoreDiagnostics || []);
   const diagnostics = [
     ...unrecoverable,
     ...ts.sortAndDeduplicateDiagnostics([
@@ -255,7 +256,7 @@ function check(ts, options, held) {
         ? program.getDeclarationDiagnostics()
         : []),
     ]),
-  ];
+  ].filter((diagnostic) => !ignored.has(diagnostic.code));
 
   // A file this program never asked for is one it no longer holds.
   for (const file of held.files.keys()) {
