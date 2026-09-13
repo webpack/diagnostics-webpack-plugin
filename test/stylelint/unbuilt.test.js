@@ -80,6 +80,35 @@ describe("unbuilt", () => {
     });
   });
 
+  it("should find a file that appears with nothing else changing", (t, done) => {
+    writeFileSync(trigger, "const trigger = 1;\n");
+
+    const compiler = pack("unbuilt");
+    let creating = true;
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (creating) {
+        assert.strictEqual(stats.hasErrors(), false);
+
+        creating = false;
+        // Nothing webpack built is touched: the rebuild is the watcher
+        // answering for the folder the check reads.
+        writeFileSync(orphan, "#orphan { color: black; }\n");
+
+        return;
+      }
+
+      if (!stats.hasErrors()) return;
+
+      const [{ message }] = stats.compilation.errors;
+
+      assert.match(message, /orphan\.scss/u);
+      done();
+    });
+  });
+
   it("should stop reporting a file that is gone", (t, done) => {
     writeFileSync(trigger, "const trigger = 1;\n");
     writeFileSync(orphan, "#orphan { color: black; }\n");

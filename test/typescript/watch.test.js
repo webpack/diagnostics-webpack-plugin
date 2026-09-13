@@ -129,6 +129,74 @@ describe("watch", () => {
     });
   });
 
+  it("should find a file the config file covers that appears", (t, done) => {
+    writeConfig(true);
+    writeFileSync(trigger, "export const trigger = 1;\n");
+
+    const compiler = pack("watch");
+    let creating = true;
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (creating) {
+        assert.strictEqual(stats.hasErrors(), false);
+
+        creating = false;
+        // Nothing webpack built is touched: the rebuild is the watcher
+        // answering for what the config file's `include` covers.
+        writeFileSync(orphan, "export const wrong: string = 42;\n");
+
+        return;
+      }
+
+      if (!stats.hasErrors()) return;
+
+      const [{ message }] = stats.compilation.errors;
+
+      assert.match(message, /orphan\.ts/u);
+      assert.match(message, /TS2322/u);
+      done();
+    });
+  });
+
+  it("should watch for the file an import resolves to nothing", (t, done) => {
+    writeConfig(true);
+    writeFileSync(trigger, "export const trigger = 1;\n");
+    writeFileSync(
+      dependent,
+      'import { shared } from "./dependency.js";\n\nexport const doubled: number = shared * 2;\n',
+    );
+
+    const compiler = pack("watch");
+    let creating = true;
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (creating) {
+        const [{ message }] = stats.compilation.errors;
+
+        assert.match(message, /TS2307/u);
+        // The file the author goes on to write is one of the paths the
+        // resolver tried, so webpack is told to watch for it.
+        assert.ok(
+          [...stats.compilation.missingDependencies].includes(dependency),
+          "the path the import resolved to nothing through is watched",
+        );
+
+        creating = false;
+        writeFileSync(dependency, "export const shared = 1;\n");
+
+        return;
+      }
+
+      if (stats.hasErrors()) return;
+
+      done();
+    });
+  });
+
   it("should rebuild when the config file changes", (t, done) => {
     writeConfig(false);
     writeFileSync(trigger, "export const trigger = 1;\n");

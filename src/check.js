@@ -9,7 +9,8 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {import("./checks/index.js").CheckInstance} CheckInstance */
 /** @typedef {import("./options.js").EnabledCheck} EnabledCheck */
 /** @typedef {{ filePath: string, content: string }} OutputReportContent */
-/** @typedef {{ read: string[], errors?: DiagnosticError, warnings?: DiagnosticError, outputReport?: OutputReportContent }} Report */
+/** @typedef {{ read: string[], directories: string[], missing: string[] }} Dependencies */
+/** @typedef {Dependencies & { errors?: DiagnosticError, warnings?: DiagnosticError, outputReport?: OutputReportContent }} Report */
 /** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report>, detach: (report: Promise<Report>) => void }} Runner */
 /** @typedef {Map<string, CheckResult | undefined>} ResultStore */
 
@@ -235,7 +236,18 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
   async function report() {
     const instance = await pending;
 
-    if (!instance) return { read: [...read] };
+    /**
+     * What a watcher has to follow for the check to answer the same way again.
+     * @returns {Dependencies} the files, directories and absent files it read
+     */
+    const dependencies = () => ({
+      read: [...read],
+      directories:
+        instance && instance.readDirectories ? instance.readDirectories() : [],
+      missing: instance && instance.missingFiles ? instance.missingFiles() : [],
+    });
+
+    if (!instance) return dependencies();
 
     // Get the current results, resetting the raw results to empty.
     const raw = await flatten(rawResults.splice(0));
@@ -252,14 +264,14 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
 
     // Do not analyze when the check reported nothing.
     if (!results || results.length === 0) {
-      return { read: [...read] };
+      return dependencies();
     }
 
     const format = await instance.getFormatter(options.formatter);
     const { errors, warnings } = instance.splitResults(results);
 
     /** @type {Report} */
-    const report = { read: [...read] };
+    const report = dependencies();
 
     // What `reportAs` drops is not formatted at all, but an `outputReport` is
     // still written from all of the results below.

@@ -1,4 +1,5 @@
-import { isAbsolute, join, normalize } from "node:path";
+import { readdirSync } from "node:fs";
+import { isAbsolute, join, normalize, relative } from "node:path";
 
 import picomatch from "picomatch";
 import { globSync } from "tinyglobby";
@@ -17,6 +18,7 @@ import {
 /** @typedef {import("webpack").Compiler} Compiler */
 /** @typedef {import("webpack").Module} Module */
 /** @typedef {import("webpack").NormalModule} NormalModule */
+/** @typedef {import("./check.js").Dependencies} Dependencies */
 /** @typedef {import("./check.js").Runner} Runner */
 /** @typedef {import("./checks/index.js").CheckAdapter} CheckAdapter */
 /** @typedef {import("./options.js").EnabledCheck} EnabledCheck */
@@ -72,6 +74,70 @@ function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
   }
 
   return collected;
+}
+
+/**
+ * @param {string} directory the directory to answer for
+ * @param {string} path the path it may hold
+ * @returns {boolean} whether the directory is the path or holds it
+ */
+function contains(directory, path) {
+  if (!path) return false;
+
+  const inside = relative(directory, path);
+
+  return inside === "" || (!inside.startsWith("..") && !isAbsolute(inside));
+}
+
+/**
+ * The directories a check's globs take their files from, which is where a file
+ * it has never been handed appears.
+ * @param {ResolvedCheck} check the check to answer for
+ * @returns {string[]} the directories its globs are rooted at
+ */
+function globRoots({ adapter, wanted }) {
+  // A check reading the files webpack built has nothing to say about one
+  // webpack does not build.
+  if (adapter.filesSource !== "glob") return [];
+
+  /** @type {Set<string>} */
+  const roots = new Set();
+
+  for (const pattern of wanted) {
+    const { base, isGlob } = picomatch.scan(pattern);
+
+    // A pattern naming one file is followed as that file rather than as the
+    // folder it sits in.
+    if (isGlob && base) roots.add(base);
+  }
+
+  return [...roots];
+}
+
+/**
+ * Webpack rebuilds on a change anywhere under a directory it watches, so one
+ * holding what the build writes, or what the check itself leaves out, is not a
+ * directory to hand it.
+ * @param {string} directory a directory a check reads from
+ * @param {Compiler} compiler compiler
+ * @param {(file: string) => boolean} isExcluded whether a path is left out
+ * @returns {boolean} whether the whole of it can be watched
+ */
+function canWatch(directory, compiler, isExcluded) {
+  if (contains(directory, compiler.outputPath)) return false;
+
+  try {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (entry.isDirectory() && isExcluded(join(directory, entry.name))) {
+        return false;
+      }
+    }
+  } catch {
+    // A directory that cannot be read is not one to watch either.
+    return false;
+  }
+
+  return true;
 }
 
 /**
@@ -219,7 +285,7 @@ class DiagnosticsWebpackPlugin {
 
     // What each check read the last time it reported, so that a rebuild whose
     // results land after it can still hand the watcher the files they cover.
-    /** @type {Map<string, string[]>} */
+    /** @type {Map<string, Dependencies>} */
     const readLast = new Map();
     // A report of an older compilation describes files that have been checked
     // again since, so it is dropped rather than printed after the newer one.
@@ -247,8 +313,8 @@ class DiagnosticsWebpackPlugin {
       runner.detach(report);
 
       report.then(
-        ({ errors, warnings, read }) => {
-          readLast.set(name, read);
+        ({ errors, warnings, read, missing, directories }) => {
+          readLast.set(name, { read, missing, directories });
 
           if (generation !== mine) return;
 
@@ -403,13 +469,42 @@ class DiagnosticsWebpackPlugin {
           /**
            * Webpack watches what it built; a check reads what it was
            * configured to, which is not always the same set of files.
-           * @param {string[]} read the files a run of a check read
+           * @param {ResolvedCheck} check the check that read them
+           * @param {Dependencies} dependencies what a run of it read
            */
-          const watch = (read) => {
+          const watch = (check, { read, missing, directories }) => {
             // Each one is spelled the way the platform does: a watcher looks a
             // change up under the path it joined, not the one it was given.
             for (const file of read) {
               compilation.fileDependencies.add(normalize(file));
+            }
+
+            // A path an import resolved to nothing through is watched for the
+            // file the author goes on to write there.
+            for (const file of missing) {
+              if (check.isExcluded(file)) continue;
+
+              compilation.missingDependencies.add(normalize(file));
+            }
+
+            // A file that does not exist yet is under no watch of its own, so
+            // the directory a check would find it in answers for it.
+            const roots = [...globRoots(check), ...directories].filter(
+              (directory) => canWatch(directory, compiler, check.isExcluded),
+            );
+
+            for (const directory of roots) {
+              // Watching a directory covers what is under it, so one inside
+              // another of them is already answered for.
+              if (
+                roots.some(
+                  (root) => root !== directory && contains(root, directory),
+                )
+              ) {
+                continue;
+              }
+
+              compilation.contextDependencies.add(normalize(directory));
             }
           };
 
@@ -421,7 +516,7 @@ class DiagnosticsWebpackPlugin {
             // reads this time is not known until it is done, by which point
             // the watcher has been handed its list.
             if (check.late) {
-              watch(/** @type {string[]} */ (readLast.get(name)));
+              watch(check, /** @type {Dependencies} */ (readLast.get(name)));
 
               afterBuild.push(() => {
                 check.handOver();
@@ -431,11 +526,18 @@ class DiagnosticsWebpackPlugin {
               continue;
             }
 
-            const { errors, warnings, outputReport, read } =
-              await runner.report();
+            const report = await runner.report();
+            const {
+              errors,
+              warnings,
+              outputReport,
+              read,
+              missing,
+              directories,
+            } = report;
 
-            readLast.set(name, read);
-            watch(read);
+            readLast.set(name, { read, missing, directories });
+            watch(check, report);
 
             // `reportAs` has already dropped whatever it reports as `false`,
             // so what is left only needs putting where it belongs.

@@ -3,6 +3,7 @@ export type Compilation = import("webpack").Compilation;
 export type Compiler = import("webpack").Compiler;
 export type Module = import("webpack").Module;
 export type NormalModule = import("webpack").NormalModule;
+export type Dependencies = import("./check.js").Dependencies;
 export type Runner = import("./check.js").Runner;
 export type CheckAdapter = import("./checks/index.js").CheckAdapter;
 export type EnabledCheck = import("./options.js").EnabledCheck;

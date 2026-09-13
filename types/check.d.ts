@@ -7,8 +7,12 @@ export type OutputReportContent = {
   filePath: string;
   content: string;
 };
-export type Report = {
+export type Dependencies = {
   read: string[];
+  directories: string[];
+  missing: string[];
+};
+export type Report = Dependencies & {
   errors?: DiagnosticError;
   warnings?: DiagnosticError;
   outputReport?: OutputReportContent;

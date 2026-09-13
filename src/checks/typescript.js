@@ -17,7 +17,7 @@ import { importFrom, omitPluginOptions } from "../utils.js";
 /**
  * What one compilation leaves for the next: the files it parsed, the host that
  * hands them back, and the program that type checked them.
- * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY }} Held
+ * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY }} Held
  */
 
 const nodeRequire = createRequire(import.meta.url);
@@ -47,6 +47,7 @@ function getHeld(compiler, id) {
       signature: "",
       files: new Map(),
       seen: new Set(),
+      missing: new Set(),
       host: undefined,
       program: undefined,
     };
@@ -78,11 +79,24 @@ function versionOf(file) {
  * @param {EXPECTED_ANY} options the options the program is built with
  * @param {Map<string, EXPECTED_ANY>} files what was read, by path
  * @param {Set<string>} seen the paths this program asked for
+ * @param {Set<string>} missing the paths it asked for and did not get
  * @returns {EXPECTED_ANY} the host
  */
-function createHost(ts, options, files, seen) {
+function createHost(ts, options, files, seen, missing) {
   const host = ts.createCompilerHost(options);
   const read = host.getSourceFile.bind(host);
+  const exists = host.fileExists.bind(host);
+
+  // Where an import that resolves to nothing is caught: the file the author
+  // goes on to write is one of the paths the resolver tried here.
+  host.fileExists = (/** @type {string} */ fileName) => {
+    const found = exists(fileName);
+
+    if (found) missing.delete(fileName);
+    else missing.add(fileName);
+
+    return found;
+  };
 
   host.getSourceFile = (
     /** @type {string} */ fileName,
@@ -148,7 +162,7 @@ function getTypeScriptOptions(options) {
  * @param {TypeScript} ts the loaded TypeScript
  * @param {Options} options options
  * @param {Held} held what the last compilation left behind
- * @returns {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[] }} what it found, and what it read to find it
+ * @returns {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[] }} what it found, and what it read to find it
  */
 function check(ts, options, held) {
   const context = String(options.context);
@@ -188,7 +202,14 @@ function check(ts, options, held) {
     ) => unrecoverable.push(diagnostic),
   });
 
-  if (!parsed) return { diagnostics: unrecoverable, host, files: [configFile] };
+  if (!parsed) {
+    return {
+      diagnostics: unrecoverable,
+      host,
+      files: [configFile],
+      directories: [],
+    };
+  }
 
   const signature = `${configFile}\0${JSON.stringify(parsed.options)}`;
 
@@ -197,7 +218,13 @@ function check(ts, options, held) {
   if (held.signature !== signature) {
     held.signature = signature;
     held.files = new Map();
-    held.host = createHost(ts, parsed.options, held.files, held.seen);
+    held.host = createHost(
+      ts,
+      parsed.options,
+      held.files,
+      held.seen,
+      held.missing,
+    );
     held.program = undefined;
   }
 
@@ -241,6 +268,9 @@ function check(ts, options, held) {
     // The config file decides which files the program holds, so reading it
     // again is what a change to it takes.
     files: [configFile, ...extended, ...parsed.fileNames],
+    // What `include` covers, which is where a file the program has never held
+    // can appear.
+    directories: Object.keys(parsed.wildcardDirectories || {}),
   };
 }
 
@@ -261,6 +291,8 @@ async function create({ key, options, compilation }) {
   let host;
   /** @type {string[]} */
   let read = [];
+  /** @type {string[]} */
+  let directories = [];
   // The program is the whole project, so it is built once however many batches
   // of files the plugin hands over.
   let checked = false;
@@ -275,11 +307,18 @@ async function create({ key, options, compilation }) {
 
       host = found.host;
       read = found.files;
+      directories = found.directories;
 
       return found.diagnostics;
     },
     readFiles() {
       return read;
+    },
+    readDirectories() {
+      return directories;
+    },
+    missingFiles() {
+      return [...held.missing];
     },
     async getResults(results) {
       return results;

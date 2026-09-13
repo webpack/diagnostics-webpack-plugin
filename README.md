@@ -207,6 +207,16 @@ Specify directories, files, or globs. Must be relative to `options.context`.
 Directories are traversed recursively looking for files matching `options.extensions`.
 File and glob patterns ignore `options.extensions`.
 
+In a watch run the folder a check takes its files from is watched, so a file
+you add there is checked without anything else having to change — and for the
+`typescript` check, so is every folder the `tsconfig.json` `include` covers. A
+folder is only watched when the whole of it can be: webpack rebuilds on a
+change anywhere under one, so a folder holding what the build writes
+(`output.path`) or what the check itself leaves out
+([`exclude`](#exclude), `node_modules` by default) is left alone rather than
+turning every write into a rebuild. Pointing `files` at your sources rather
+than leaving it at the project root is what makes it watchable.
+
 #### `extensions`
 
 - Type:
