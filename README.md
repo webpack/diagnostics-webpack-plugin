@@ -352,6 +352,21 @@ new DiagnosticsPlugin({
 });
 ```
 
+A check nothing can be reported from is one a **watch** rebuild does not wait
+for: every `reportAs` that leaves both errors and warnings off the compilation
+— `"log"`, `false`, or an object spelling both out — with no
+[`outputReport`](#outputreport) to write. The first build still waits, since it
+is what tells the watcher which files the check reads. From the rebuild on, the
+check is run once the build is over rather than beside it, and what it finds is
+printed through webpack's infrastructure log rather than through
+`stats.logging`.
+
+The work is moved out of the rebuild rather than off the machine: an edit
+arriving while such a check is still running waits for the rest of it, since a
+check holds the thread the build runs on. A report a newer rebuild has already
+overtaken is dropped, and a check never has two of its runs going at once — the
+next starts when the last has reported.
+
 #### `outputReport`
 
 - Type:

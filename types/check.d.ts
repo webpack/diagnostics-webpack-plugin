@@ -17,11 +17,14 @@ export type Runner = {
   lint: (files: string[]) => void;
   keep: (files: string[]) => void;
   report: () => Promise<Report>;
+  detach: (report: Promise<Report>) => void;
 };
 export type ResultStore = Map<string, CheckResult | undefined>;
 /**
- * Creates the check synchronously so that the compilation hooks are tapped
- * before webpack starts building modules, whatever the tool takes to load.
+ * Creates the runner synchronously so that the compilation hooks are tapped
+ * before webpack starts building modules, whatever the tool takes to load. A
+ * run the last compilation left to finish on its own is waited for first, so
+ * that a check never has two of its tools running side by side.
  * @param {string} key a key unique to the compiler the check runs for
  * @param {EnabledCheck} check the check to run
  * @param {Compilation} compilation compilation
