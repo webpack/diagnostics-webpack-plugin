@@ -27,6 +27,7 @@ export default defineConfig([
     rules: {
       camelcase: "off",
       "id-length": "off",
+      "import/no-extraneous-dependencies": "off",
       "jsdoc/require-jsdoc": "off",
       "n/no-unpublished-import": "off",
       "n/no-unpublished-require": "off",
