@@ -31,6 +31,33 @@ describe("typescript", () => {
     assert.match(seen, /orphan\.ts/u);
   });
 
+  it("should report every diagnostic when none is ignored", async () => {
+    const stats = await pack("ignored").runAsync();
+    const [{ message }] = stats.compilation.errors;
+
+    assert.match(message, /TS2322/u);
+    assert.match(message, /TS2307/u);
+  });
+
+  it("should leave out the diagnostics whose code is ignored", async () => {
+    const stats = await pack("ignored", {
+      ignoreDiagnostics: [2322],
+    }).runAsync();
+    const [{ message }] = stats.compilation.errors;
+
+    assert.doesNotMatch(message, /TS2322/u);
+    assert.match(message, /TS2307/u);
+  });
+
+  it("should report nothing when every diagnostic is ignored", async () => {
+    const stats = await pack("ignored", {
+      ignoreDiagnostics: [2322, 2307],
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+    assert.strictEqual(stats.hasWarnings(), false);
+  });
+
   it("should report TypeScript's own word on a config it cannot read", async () => {
     const stats = await pack("bad", {
       configFile: "/nowhere/tsconfig.json",
