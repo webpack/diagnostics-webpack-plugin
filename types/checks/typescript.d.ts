@@ -26,6 +26,7 @@ export type Held = {
   signature: string;
   files: Map<string, EXPECTED_ANY>;
   seen: Set<string>;
+  missing: Set<string>;
   host: EXPECTED_ANY;
   program: EXPECTED_ANY;
 };

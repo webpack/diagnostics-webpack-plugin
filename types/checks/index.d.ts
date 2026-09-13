@@ -53,6 +53,14 @@ export type CheckInstance = {
    */
   readFiles?: (() => string[]) | undefined;
   /**
+   * the directories the check takes its files from, so that a file appearing in one is picked up
+   */
+  readDirectories?: (() => string[]) | undefined;
+  /**
+   * the files the check looked for and did not find, so that creating one is picked up
+   */
+  missingFiles?: (() => string[]) | undefined;
+  /**
    * loads a formatter, falling back to the tool's default one
    */
   getFormatter: (formatter?: FormatterOption) => Promise<Format>;
@@ -169,6 +177,8 @@ export type CheckAdapter = {
  * @property {(results: CheckResult[]) => { errors: CheckResult[], warnings: CheckResult[] }} splitResults splits the results by their own severity, leaving `reportAs` to the plugin
  * @property {((result: CheckResult) => string | undefined)=} resultPath the file a result came from, without which a rebuild re-lints everything
  * @property {(() => string[])=} readFiles the files the check read beyond the ones it was handed, so that a watcher picks up a change to them
+ * @property {(() => string[])=} readDirectories the directories the check takes its files from, so that a file appearing in one is picked up
+ * @property {(() => string[])=} missingFiles the files the check looked for and did not find, so that creating one is picked up
  * @property {(formatter?: FormatterOption) => Promise<Format>} getFormatter loads a formatter, falling back to the tool's default one
  * @property {() => Promise<void>} cleanup releases whatever the tool holds after a run
  */
