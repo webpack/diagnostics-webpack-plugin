@@ -13,7 +13,7 @@ const nodeRequire = createRequire(import.meta.url);
 const PLUGIN_NAME = "Diagnostics Webpack Plugin";
 
 /** @typedef {import("webpack").Compiler} Compiler */
-/** @typedef {"error" | "warning" | false} Severity */
+/** @typedef {"error" | "warning" | "log" | false} Severity */
 /** @typedef {"errors" | "warnings"} Results */
 /** @typedef {number | boolean | "auto"} Threads */
 /** @typedef {Severity | { errors?: Severity, warnings?: Severity }} ReportAs */

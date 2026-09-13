@@ -98,10 +98,10 @@
       ]
     },
     "reportAs": {
-      "description": "What a check reports its results as: `\"error\"` reports them as webpack errors and fails the build, `\"warning\"` reports them as webpack warnings, `false` reports nothing. One value covers a check's errors and its warnings alike, an object sets them apart, and a severity an object leaves out keeps its own.",
+      "description": "What a check reports its results as: `\"error\"` reports them as webpack errors and fails the build, `\"warning\"` reports them as webpack warnings, `\"log\"` writes them to the log and leaves the build carrying neither, `false` reports nothing. One value covers a check's errors and its warnings alike, an object sets them apart, and a severity an object leaves out keeps its own.",
       "anyOf": [
         {
-          "enum": ["error", "warning", false]
+          "enum": ["error", "warning", "log", false]
         },
         {
           "type": "object",
@@ -109,11 +109,11 @@
           "properties": {
             "errors": {
               "description": "What a check's errors are reported as, or `false` to drop them.",
-              "enum": ["error", "warning", false]
+              "enum": ["error", "warning", "log", false]
             },
             "warnings": {
               "description": "What a check's warnings are reported as, or `false` to drop them.",
-              "enum": ["error", "warning", false]
+              "enum": ["error", "warning", "log", false]
             }
           }
         }

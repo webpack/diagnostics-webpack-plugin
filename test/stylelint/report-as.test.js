@@ -42,6 +42,23 @@ describe("report as", () => {
     assert.strictEqual(stats.hasWarnings(), false);
   });
 
+  it("should log rather than report what is set to log", async () => {
+    const compiler = pack("full-of-problems", { reportAs: "log" });
+
+    const stats = await compiler.runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+    assert.strictEqual(stats.hasWarnings(), false);
+
+    const logged = stats.compilation.logging.get("DiagnosticsWebpackPlugin");
+
+    assert.deepStrictEqual(
+      logged.map((/** @type {EXPECTED_ANY} */ entry) => entry.type),
+      ["error", "warn"],
+    );
+    assert.match(logged[0].args[0], /\[stylelint\]/u);
+  });
+
   it("should let a clean build pass whatever it is set to", async () => {
     const compiler = pack("good", { reportAs: "error" });
 

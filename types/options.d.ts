@@ -1,6 +1,6 @@
 export type EXPECTED_ANY = any;
 export type Compiler = import("webpack").Compiler;
-export type Severity = "error" | "warning" | false;
+export type Severity = "error" | "warning" | "log" | false;
 export type Results = "errors" | "warnings";
 export type Threads = number | boolean | "auto";
 export type ReportAs =

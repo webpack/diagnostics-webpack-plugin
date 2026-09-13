@@ -1,7 +1,19 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import pack from "./utils/pack.js";
+
+const PLUGIN = "DiagnosticsWebpackPlugin";
+
+/**
+ * @param {EXPECTED_ANY} stats the stats of a finished build
+ * @returns {EXPECTED_ANY[]} what the plugin wrote to the compilation's log
+ */
+function logging(stats) {
+  return stats.compilation.logging.get(PLUGIN) || [];
+}
 
 describe("report as", () => {
   it("should leave each result at its own severity by default", async () => {
@@ -43,6 +55,53 @@ describe("report as", () => {
 
     assert.strictEqual(stats.hasErrors(), false);
     assert.strictEqual(stats.hasWarnings(), false);
+  });
+
+  it("should log rather than report what is set to log", async () => {
+    const stats = await pack("full-of-problems", {
+      reportAs: "log",
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+    assert.strictEqual(stats.hasWarnings(), false);
+
+    const logged = logging(stats);
+
+    assert.strictEqual(logged.length, 2);
+    assert.deepStrictEqual(
+      logged.map(({ type }) => type),
+      ["error", "warn"],
+    );
+    assert.match(logged[0].args[0], /\[eslint\]/u);
+  });
+
+  it("should log one severity and report the other", async () => {
+    const stats = await pack("full-of-problems", {
+      reportAs: { errors: "log" },
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+    assert.strictEqual(stats.hasWarnings(), true);
+    assert.deepStrictEqual(
+      logging(stats).map(({ type }) => type),
+      ["error"],
+    );
+  });
+
+  it("should write an outputReport of what it only logged", async () => {
+    const stats = await pack("full-of-problems", {
+      reportAs: "log",
+      outputReport: { filePath: "report-as-log.txt" },
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+    assert.match(
+      readFileSync(
+        join(stats.compilation.compiler.outputPath, "report-as-log.txt"),
+        "utf8",
+      ),
+      /error/u,
+    );
   });
 
   it("should set the severities apart with an object", async () => {
@@ -87,11 +146,18 @@ describe("report as", () => {
   });
 
   it("should let a clean build pass whatever it is set to", async () => {
-    for (const reportAs of ["error", "warning", false, { errors: "warning" }]) {
+    for (const reportAs of [
+      "error",
+      "warning",
+      "log",
+      false,
+      { errors: "warning" },
+    ]) {
       const stats = await pack("good", { reportAs }).runAsync();
 
       assert.strictEqual(stats.hasErrors(), false);
       assert.strictEqual(stats.hasWarnings(), false);
+      assert.deepStrictEqual(logging(stats), []);
     }
   });
 

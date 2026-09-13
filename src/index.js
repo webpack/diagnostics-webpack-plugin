@@ -338,6 +338,18 @@ class DiagnosticsWebpackPlugin {
 
               const severity = reportedAs(options.reportAs, results);
 
+              // Logged rather than reported: the terminal shows it, the build
+              // carries neither an error nor a warning, and a dev server has
+              // nothing to overlay.
+              if (severity === "log") {
+                const logger = compilation.getLogger(LINT_PLUGIN);
+
+                if (results === "errors") logger.error(reported.message);
+                else logger.warn(reported.message);
+
+                continue;
+              }
+
               (severity === "error"
                 ? compilation.errors
                 : compilation.warnings

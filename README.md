@@ -314,7 +314,7 @@ Every check reports its errors as webpack errors and its warnings as webpack war
 
 ```ts
 type reportAs = Severity | { errors?: Severity; warnings?: Severity };
-type Severity = "error" | "warning" | false;
+type Severity = "error" | "warning" | "log" | false;
 ```
 
 - Default: unset — each result stays at the severity the check gave it
@@ -326,6 +326,7 @@ What a check reports its results as. One value covers its errors and its warning
 | unset                   | Errors fail the build, warnings do not.                    |
 | `"error"`               | Everything fails the build, warnings included.             |
 | `"warning"`             | Nothing fails the build; errors are reported as warnings.  |
+| `"log"`                 | The terminal alone, through webpack's log.                 |
 | `false`                 | Nothing is reported. An `outputReport` is still written.   |
 | `{ warnings: false }`   | The errors alone, still failing the build.                 |
 | `{ warnings: "error" }` | Warnings fail the build too, and errors keep failing it.   |
@@ -335,6 +336,19 @@ What a check reports its results as. One value covers its errors and its warning
 new DiagnosticsPlugin({
   reportAs: { warnings: false }, // the errors alone
   checks: [{ use: "eslint" }],
+});
+```
+
+`"log"` is for a check nobody should be stopped by yet. Its results reach
+webpack's log — the terminal, and `stats.logging` — rather than
+`compilation.errors` or `compilation.warnings`, so the build carries neither,
+`stats.hasWarnings()` stays false and a dev server overlays nothing. An
+`outputReport` is written either way.
+
+```js
+new DiagnosticsPlugin({
+  // the whole project is linted, and only the new check is advisory
+  checks: [{ use: "eslint" }, { use: "typescript", reportAs: "log" }],
 });
 ```
 
