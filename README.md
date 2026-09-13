@@ -86,6 +86,33 @@ The options are checked against their schema from webpack's own [`validate`](htt
 
 Every check to run is an entry in `checks`, named by its `use`. The list may name the same tool more than once, so one instance can inspect two file sets under different configurations.
 
+### Every option
+
+| Option                                                                                         | Layer  | What it decides                                                              |
+| :--------------------------------------------------------------------------------------------- | :----- | :--------------------------------------------------------------------------- |
+| [`checks`](#checks)                                                                            | Plugin | Which checks run, and the options only each of them understands.             |
+| [`context`](#context)                                                                          | Plugin | The folder every relative `files` and `exclude` pattern is resolved against. |
+| [`lintOnStart`](#lintonstart)                                                                  | Plugin | Whether the first compilation checks everything it covers.                   |
+| [`cache`](#cache)                                                                              | Shared | Whether the tool keeps a cache of its own between runs.                      |
+| [`cacheLocation`](#cachelocation)                                                              | Shared | Where that cache is written.                                                 |
+| [`exclude`](#exclude)                                                                          | Shared | What is left out.                                                            |
+| [`extensions`](#extensions)                                                                    | Shared | Which extensions a named folder is walked for.                               |
+| [`files`](#files)                                                                              | Shared | What to check: naming it checks every file it matches, built or not.         |
+| [`fix`](#fix)                                                                                  | Shared | Whether the tool writes back what it can fix.                                |
+| [`formatter`](#formatter)                                                                      | Shared | How results are turned into the message that is reported.                    |
+| [`outputReport`](#outputreport)                                                                | Shared | A file the same results are written to.                                      |
+| [`reportAs`](#reportas)                                                                        | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
+| [`resourceQueryExclude`](#resourcequeryexclude)                                                | Shared | Which module queries are left out.                                           |
+| [`threads`](#threads)                                                                          | Shared | How wide the work is spread.                                                 |
+| [`configType`, `eslintPath`](#eslint)                                                          | Check  | ESLint's own.                                                                |
+| [`stylelintPath`](#stylelint)                                                                  | Check  | Stylelint's own.                                                             |
+| [`oxlintPath`, `configFile`, `args`](#oxlint)                                                  | Check  | oxlint's own.                                                                |
+| [`biomePath`, `command`, `configFile`, `args`](#biome)                                         | Check  | Biome's own.                                                                 |
+| [`typescriptPath`, `configFile`, `compilerOptions`, `build`, `ignoreDiagnostics`](#typescript) | Check  | TypeScript's own.                                                            |
+
+Anything else written in a `checks` entry is handed to the tool itself, so its
+own Node.js API options go next to these.
+
 ```js
 new DiagnosticsPlugin({
   // Plugin options
@@ -102,6 +129,38 @@ new DiagnosticsPlugin({
 ```
 
 ### Plugin options
+
+#### `checks`
+
+- Type:
+
+```ts
+type checks = (string | ({ use: string | CheckAdapter } & Options))[];
+```
+
+- Default: none — this is the one option the plugin requires
+
+The checks to run. An entry is the name of a built-in check, or an object naming
+it under `use` next to the options it takes, so these two are the same thing:
+
+```js
+new DiagnosticsPlugin({ checks: ["eslint", { use: "eslint" }] });
+```
+
+Naming the same tool twice runs it twice, which is how one build checks two file
+sets under two configurations:
+
+```js
+new DiagnosticsPlugin({
+  checks: [
+    { use: "eslint", files: "src", fix: true },
+    { use: "eslint", files: "scripts", reportAs: "warning" },
+  ],
+});
+```
+
+`use` also takes an adapter of your own rather than a built-in name — see
+[Adding a check](#adding-a-check).
 
 #### `context`
 
@@ -934,6 +993,61 @@ The two plugins become one instance, and options they had in common are written 
 +    }),
    ],
  };
+```
+
+### From `fork-ts-checker-webpack-plugin`
+
+The `typescript` check does what that plugin does — type check the program a
+`tsconfig.json` describes, rather than the files webpack happens to build — and
+is written as one entry in `checks`:
+
+```diff
+-const ForkTsCheckerWebpackPlugin = require("fork-ts-checker-webpack-plugin");
++const DiagnosticsPlugin = require("diagnostics-webpack-plugin");
+
+ module.exports = {
+   plugins: [
+-    new ForkTsCheckerWebpackPlugin({
+-      typescript: { configFile: "tsconfig.build.json", build: true },
+-    }),
++    new DiagnosticsPlugin({
++      checks: [
++        { use: "typescript", configFile: "tsconfig.build.json", build: true },
++      ],
++    }),
+   ],
+ };
+```
+
+**The check runs in the build's own process.** That plugin forks one, which is
+why it has a `memoryLimit` and a `profile` of its own; here the program is kept
+between rebuilds instead, so a rebuild type checks what the change reaches
+rather than the project again. What that costs and saves is under
+[the TypeScript check](#typescript).
+
+| `fork-ts-checker-webpack-plugin`    | Here                                                                                                                                                                                 |
+| :---------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `async`                             | Not an option: a check the compilation carries nothing of — [`reportAs`](#reportas) `"log"` or `false`, with no `outputReport` — is run after a watch rebuild rather than during it. |
+| `typescript.configFile`             | `configFile`, in the entry — see [the TypeScript check](#typescript).                                                                                                                |
+| `typescript.context`                | [`context`](#context), the plugin's own.                                                                                                                                             |
+| `typescript.build`                  | [`build`](#build).                                                                                                                                                                   |
+| `typescript.configOverwrite`        | [`compilerOptions`](#compileroptions), or any compiler option written at the top of the entry.                                                                                       |
+| `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                 |
+| `typescript.mode`                   | Not an option: nothing is written without `build`, and `build` writes the declarations a referenced project publishes and nothing else.                                              |
+| `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                  |
+| `typescript.diagnosticOptions`      | No switch per kind; [`ignoreDiagnostics`](#ignorediagnostics) leaves out the codes you name.                                                                                         |
+| `issue.include`, `issue.exclude`    | [`files`](#files) and [`exclude`](#exclude) choose the files, [`ignoreDiagnostics`](#ignorediagnostics) the codes. A predicate of your own has no equivalent.                        |
+| `formatter`                         | [`formatter`](#formatter). Unset, TypeScript's own formatter is used, with color and the source line.                                                                                |
+| `logger`                            | Webpack's logger is what the plugin writes to; `reportAs: "log"` is what sends results there rather than onto the compilation.                                                       |
+| `devServer`                         | Nothing to set: results reach the compilation, so a dev server overlays them, and `reportAs: "log"` keeps them off it.                                                               |
+
+Running it next to a linter is one plugin rather than two, with one place to say
+how what they find is reported:
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "eslint" }, { use: "typescript" }],
+});
 ```
 
 ## Changelog
