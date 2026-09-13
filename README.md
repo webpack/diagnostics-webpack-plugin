@@ -455,6 +455,11 @@ Specify the type of configuration to use with ESLint.
 
 The new configuration format is explained in its [own documentation](https://eslint.org/docs/latest/use/configure/configuration-files).
 
+`eslintrc` needs an ESLint that still reads one: ESLint 9 does, ESLint 10 removed
+it, and the option stays for as long as this plugin supports 9. The check loads
+ESLint the same way wherever it runs it, in the build's own thread and in a
+worker of a [pool](#threads) alike, and the ESLint 9 job in CI checks both.
+
 ### `eslintPath`
 
 - Type:
