@@ -7,6 +7,7 @@ import {
   parseFiles,
   parseFoldersToGlobs,
   toPosixPath,
+  writeOutputFile,
 } from "../src/utils.js";
 
 // `parseFoldersToGlobs` reads what it is given, so the fixtures have to exist.
@@ -83,6 +84,27 @@ describe("utils", () => {
     assert.deepStrictEqual(await parseFoldersToGlobs("**.notjs", "js"), [
       "**.notjs",
     ]);
+  });
+
+  it("writeOutputFile should answer where there is nothing to write to", async () => {
+    // What awaits this is the compilation's own callback, so a promise left
+    // unsettled is a build that never ends rather than one that reports.
+    /** @type {NodeJS.Timeout} */
+    let waiting;
+    const answered = await Promise.race([
+      writeOutputFile(
+        /** @type {EXPECTED_ANY} */ ({}),
+        join(directory, "report.json"),
+        "{}",
+      ).then(() => "answered"),
+      new Promise((done) => {
+        waiting = setTimeout(() => done("never answered"), 1000);
+      }),
+    ]);
+
+    clearTimeout(waiting);
+
+    assert.strictEqual(answered, "answered");
   });
 
   it("parseFoldersToGlobs should cover a path that is not there yet both ways", async () => {
