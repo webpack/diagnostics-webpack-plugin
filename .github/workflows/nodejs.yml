@@ -32,14 +32,16 @@ jobs:
       cancel-in-progress: true
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout Repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ matrix.node-version }}
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -51,25 +53,34 @@ jobs:
         run: npm run security
 
   test:
-    name: Test - ${{ matrix.os }} - Node v${{ matrix.node-version }}, Webpack ${{ matrix.webpack-version }}
+    name: Test - ${{ matrix.os }} - Node v${{ matrix.node-version }}, Webpack ${{ matrix.webpack-version }}, ESLint ${{ matrix.eslint-version }}
 
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node-version: [22.x, 24.x]
+        node-version: [22.x, 24.x, 26.x]
         webpack-version: [latest]
+        eslint-version: [latest]
+        include:
+          # The oldest ESLint the peer range names, which the checks are never
+          # run against otherwise: what `npm ci` installs is the newest.
+          - os: ubuntu-latest
+            node-version: 22.x
+            webpack-version: latest
+            eslint-version: 9.x
 
     runs-on: ${{ matrix.os }}
 
     concurrency:
-      group: test-${{ matrix.os }}-v${{ matrix.node-version }}-${{ matrix.webpack-version }}-${{ github.ref }}
+      group: test-${{ matrix.os }}-v${{ matrix.node-version }}-${{ matrix.webpack-version }}-eslint-${{ matrix.eslint-version }}-${{ github.ref }}
       cancel-in-progress: true
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Checkout Repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ matrix.node-version }}
           cache: "npm"
@@ -80,46 +91,15 @@ jobs:
       - name: Install webpack ${{ matrix.webpack-version }}
         run: npm i webpack@${{ matrix.webpack-version }}
 
+      - name: Install ESLint ${{ matrix.eslint-version }}
+        if: matrix.eslint-version != 'latest'
+        run: npm i eslint@${{ matrix.eslint-version }}
+
       - name: Run tests for webpack version ${{ matrix.webpack-version }}
         run: npm run test:coverage
 
       - name: Submit coverage data to codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@57e3a136b779b570ffcdbf80b3bdc90e7fab3de2 # v6.0.0
         with:
           files: ./lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
-
-  test-checks:
-    name: Test - checks - Eslint ${{ matrix.eslint-version }}, Stylelint ${{ matrix.stylelint-version }}
-
-    strategy:
-      matrix:
-        eslint-version: [9.x, 10.x]
-        stylelint-version: [17.x]
-
-    runs-on: ubuntu-latest
-
-    concurrency:
-      group: test-checks-${{ matrix.eslint-version }}-${{ matrix.stylelint-version }}-${{ github.ref }}
-      cancel-in-progress: true
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Use Node.js lts/*
-        uses: actions/setup-node@v6
-        with:
-          node-version: lts/*
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Install eslint ${{ matrix.eslint-version }}
-        run: npm i eslint@${{ matrix.eslint-version }}
-
-      - name: Install stylelint ${{ matrix.stylelint-version }}
-        run: npm i stylelint@${{ matrix.stylelint-version }}
-
-      - name: Run tests
-        run: npm run test:only
