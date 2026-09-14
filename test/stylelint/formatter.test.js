@@ -41,4 +41,25 @@ describe("formatter", () => {
     assert.strictEqual(stats.hasErrors(), true);
     assert.ok(stats.compilation.errors[0].message);
   });
+
+  it("should tell a formatter what the rules it reports were", async () => {
+    /** @type {EXPECTED_ANY} */
+    let given;
+
+    const compiler = pack("error", {
+      formatter: (results, returnValue) => {
+        given = returnValue;
+
+        return "reported";
+      },
+    });
+    const stats = await compiler.runAsync();
+
+    assert.strictEqual(stats.hasErrors(), true);
+    // What a formatter looks a warning's rule up in, which a lint answers with
+    // next to the results rather than on them.
+    assert.deepStrictEqual(given.ruleMetadata["color-named"], {
+      url: "https://stylelint.io/user-guide/rules/color-named",
+    });
+  });
 });

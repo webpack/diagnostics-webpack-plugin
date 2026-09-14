@@ -54,6 +54,8 @@ function getSchemas() {
 /** @typedef {(files: string | string[]) => Promise<LintResult[]>} LintTask */
 /** @typedef {{ getStylelint: () => Promise<Stylelint>, lintFiles: LintTask, cleanup: () => Promise<void>, threads: number }} Loaded */
 /** @typedef {{ [file: string]: LintResult }} LintResultMap */
+/** @typedef {{ [ruleName: string]: Partial<RuleMeta> }} RuleMetadata */
+/** @typedef {LintResult & { ruleMetadata?: RuleMetadata }} Reported */
 
 // `files`, `formatter` and `fix` are meaningful to Stylelint itself, the rest
 // of the plugin schema is not.
@@ -152,18 +154,16 @@ function getCacheKey(key, options) {
   return JSON.stringify({ key, options }, jsonStringifyReplacerSortKeys);
 }
 
-/* istanbul ignore next */
 /**
- * @param {LintResult[]} results lint results
- * @returns {{ [ruleName: string]: Partial<RuleMeta> }} a rule meta
+ * @param {Reported[]} results lint results
+ * @returns {RuleMetadata} a rule meta
  */
 function getRuleMetadata(results) {
-  const [result] = results;
+  for (const result of results) {
+    if (result.ruleMetadata) return result.ruleMetadata;
+  }
 
-  if (result === undefined) return {};
-  if (result._postcssResult === undefined) return {};
-
-  return result._postcssResult.stylelint.ruleMetadata;
+  return {};
 }
 
 /**

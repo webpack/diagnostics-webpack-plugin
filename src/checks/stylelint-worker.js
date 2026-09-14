@@ -1,6 +1,7 @@
 import { importFrom } from "../utils.js";
 
 /** @typedef {import("./stylelint.js").LintResult} LintResult */
+/** @typedef {import("./stylelint.js").Reported} Reported */
 /** @typedef {import("./stylelint.js").StylelintOptions} StylelintOptions */
 /** @typedef {import("./stylelint.js").Stylelint} Stylelint */
 /** @typedef {import("../options.js").CheckOptions} Options */
@@ -43,11 +44,11 @@ function setup(options, stylelintOptions) {
 
 /**
  * @param {string | string[]} files files
- * @returns {Promise<LintResult[]>} results
+ * @returns {Promise<Reported[]>} results
  */
 async function lintFiles(files) {
   const stylelint = await getStylelint();
-  const { results } = await stylelint.lint({
+  const { results, ruleMetadata } = await stylelint.lint({
     ...linterOptions,
     files,
     quietDeprecationWarnings: true,
@@ -62,6 +63,10 @@ async function lintFiles(files) {
     deprecations: result.deprecations,
     invalidOptionWarnings: result.invalidOptionWarnings,
     parseErrors: result.parseErrors,
+    // What a formatter looks a warning's rule up in. The postcss result it
+    // otherwise hangs off cannot cross a worker, and this is the same object
+    // on every result of a batch, so it crosses once.
+    ruleMetadata,
   }));
 }
 
