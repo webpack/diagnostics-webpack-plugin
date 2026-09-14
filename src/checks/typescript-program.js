@@ -411,6 +411,14 @@ function check(ts, options, held) {
     getNewLine: () => ts.sys.newLine,
   };
 
+  // A path only leaves the set when something asks for it again, and a program
+  // handed the last one back reuses what it resolved rather than asking. What
+  // has been written since is dropped here instead, or the watcher is left
+  // waiting for a file that is already there.
+  for (const file of held.missing) {
+    if (ts.sys.fileExists(file)) held.missing.delete(file);
+  }
+
   // Unreachable from the suite: every fixture sits under this repository's own
   // config, which the search finds on its way up.
   /* istanbul ignore next */

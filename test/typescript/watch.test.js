@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -195,6 +195,45 @@ describe("watch", () => {
 
       if (stats.hasErrors()) return;
 
+      done();
+    });
+  });
+
+  it("should stop watching for a file that has since been written", (t, done) => {
+    writeConfig(true);
+    writeFileSync(trigger, "export const trigger = 1;\n");
+    writeFileSync(
+      dependent,
+      'import { shared } from "./dependency.js";\n\nexport const doubled: number = shared * 2;\n',
+    );
+
+    const compiler = pack("watch");
+    let writing = true;
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (writing) {
+        assert.strictEqual(stats.hasErrors(), true);
+
+        writing = false;
+        // The import goes in the same edit that writes the file, so nothing
+        // asks the resolver about that path again.
+        rmSync(dependent, { force: true });
+        writeFileSync(dependency, "export const shared = 1;\n");
+
+        return;
+      }
+
+      if (stats.hasErrors()) return;
+
+      assert.deepStrictEqual(
+        [...stats.compilation.missingDependencies].filter((file) =>
+          existsSync(file),
+        ),
+        [],
+        "nothing that is already there is watched for as missing",
+      );
       done();
     });
   });
