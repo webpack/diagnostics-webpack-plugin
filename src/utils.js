@@ -190,7 +190,13 @@ const jsonStringifyReplacerSortKeys = (_, value) => {
 function writeOutputFile(compiler, name, content) {
   return /** @type {Promise<void>} */ (
     new Promise((finish, bail) => {
-      if (!compiler.outputFileSystem) return;
+      // Nothing to write it to. Answering rather than returning: what awaits
+      // this is the compilation's own callback, so a promise left unsettled
+      // is a build that never ends.
+      if (!compiler.outputFileSystem) {
+        finish();
+        return;
+      }
 
       const { mkdir, writeFile } = compiler.outputFileSystem;
 
