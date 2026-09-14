@@ -13,11 +13,17 @@ describe("formatter", () => {
   });
 
   it("should use default formatter when invalid", async () => {
-    const compiler = pack("error", { formatter: "invalid" });
-    const stats = await compiler.runAsync();
-    assert.strictEqual(stats.hasWarnings(), false);
-    assert.strictEqual(stats.hasErrors(), true);
-    assert.ok(stats.compilation.errors[0].message);
+    const named = await pack("error", { formatter: "invalid" }).runAsync();
+    const fallback = await pack("error").runAsync();
+
+    assert.strictEqual(named.hasWarnings(), false);
+    assert.strictEqual(named.hasErrors(), true);
+    // A name no formatter answers to reports what the default one would, rather
+    // than failing the run over the name.
+    assert.strictEqual(
+      named.compilation.errors[0].message,
+      fallback.compilation.errors[0].message,
+    );
   });
 
   it("should use string formatter", async () => {

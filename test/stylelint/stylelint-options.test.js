@@ -3,15 +3,16 @@ import { describe, it } from "node:test";
 
 import { getStylelintOptions } from "../../src/checks/stylelint.js";
 
-describe("eslint options", () => {
+describe("stylelint options", () => {
   it("should filter plugin options", () => {
     const options = {
       formatter: "json",
       reportAs: false,
     };
-    assert.deepStrictEqual(getStylelintOptions(options), {
-      formatter: "json",
-    });
+
+    // `formatter` is the plugin's: what Stylelint would format is the whole
+    // run, before `ignoreDiagnostics` has taken anything out of it.
+    assert.deepStrictEqual(getStylelintOptions(options), {});
   });
 
   it("should keep the stylelint options", () => {
@@ -23,7 +24,6 @@ describe("eslint options", () => {
       outputReport: true,
     };
     assert.deepStrictEqual(getStylelintOptions(options), {
-      formatter: "json",
       files: ["file.scss"],
     });
   });
