@@ -23,7 +23,7 @@ import { importFrom, omitPluginOptions } from "../utils.js";
  */
 
 /**
- * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY }} Held
+ * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY> }} Held
  */
 
 const nodeRequire = createRequire(import.meta.url);
@@ -56,6 +56,7 @@ function getHeld(compiler, id) {
       missing: new Set(),
       host: undefined,
       program: undefined,
+      programs: new Map(),
     };
     checks.set(id, held);
   }
@@ -77,32 +78,24 @@ function versionOf(file) {
   }
 }
 
+/** @type {WeakSet<EXPECTED_ANY>} */
+const keeping = new WeakSet();
+
 /**
  * A host answering with the source file it read last time for as long as the
  * file on disk is untouched, which is what a program has to be handed to reuse
  * the work of the one before it.
- * @param {TypeScript} ts the loaded TypeScript
- * @param {EXPECTED_ANY} options the options the program is built with
+ * @param {EXPECTED_ANY} host the host to read through
  * @param {Map<string, EXPECTED_ANY>} files what was read, by path
  * @param {Set<string>} seen the paths this program asked for
- * @param {Set<string>} missing the paths it asked for and did not get
- * @returns {EXPECTED_ANY} the host
+ * @returns {EXPECTED_ANY} the same host
  */
-function createHost(ts, options, files, seen, missing) {
-  const host = ts.createCompilerHost(options);
+function keepSourceFiles(host, files, seen) {
+  if (keeping.has(host)) return host;
+
+  keeping.add(host);
+
   const read = host.getSourceFile.bind(host);
-  const exists = host.fileExists.bind(host);
-
-  // Where an import that resolves to nothing is caught: the file the author
-  // goes on to write is one of the paths the resolver tried here.
-  host.fileExists = (/** @type {string} */ fileName) => {
-    const found = exists(fileName);
-
-    if (found) missing.delete(fileName);
-    else missing.add(fileName);
-
-    return found;
-  };
 
   host.getSourceFile = (
     /** @type {string} */ fileName,
@@ -129,6 +122,32 @@ function createHost(ts, options, files, seen, missing) {
   };
 
   return host;
+}
+
+/**
+ * @param {TypeScript} ts the loaded TypeScript
+ * @param {EXPECTED_ANY} options the options the program is built with
+ * @param {Map<string, EXPECTED_ANY>} files what was read, by path
+ * @param {Set<string>} seen the paths this program asked for
+ * @param {Set<string>} missing the paths it asked for and did not get
+ * @returns {EXPECTED_ANY} the host
+ */
+function createHost(ts, options, files, seen, missing) {
+  const host = ts.createCompilerHost(options);
+  const exists = host.fileExists.bind(host);
+
+  // Where an import that resolves to nothing is caught: the file the author
+  // goes on to write is one of the paths the resolver tried here.
+  host.fileExists = (/** @type {string} */ fileName) => {
+    const found = exists(fileName);
+
+    if (found) missing.delete(fileName);
+    else missing.add(fileName);
+
+    return found;
+  };
+
+  return keepSourceFiles(host, files, seen);
 }
 
 /** @type {{ plugin: EXPECTED_ANY, shared: EXPECTED_ANY, own: EXPECTED_ANY } | undefined} */
@@ -171,9 +190,10 @@ function getTypeScriptOptions(options) {
  * @param {string} configFile the config file describing the solution
  * @param {EXPECTED_ANY} host the host diagnostics are formatted against
  * @param {Diagnostic[]} unrecoverable what reading the config file itself failed with
+ * @param {Held} held what the last compilation left behind
  * @returns {Found} what it found, and what it read to find it
  */
-function buildSolution(ts, options, configFile, host, unrecoverable) {
+function buildSolution(ts, options, configFile, host, unrecoverable, held) {
   /** @type {Diagnostic[]} */
   const diagnostics = [...unrecoverable];
   const files = [configFile];
@@ -186,9 +206,43 @@ function buildSolution(ts, options, configFile, host, unrecoverable) {
     ...getTypeScriptOptions(options),
     ...options.compilerOptions,
   };
+  const signature = `build\0${configFile}\0${JSON.stringify(overrides)}`;
+
+  // Nothing the last build was made of survives a change to how it is made.
+  if (held.signature !== signature) {
+    held.signature = signature;
+    held.files = new Map();
+    held.programs = new Map();
+  }
+
+  held.seen.clear();
+
   const builderHost = ts.createSolutionBuilderHost(
     ts.sys,
-    ts.createSemanticDiagnosticsBuilderProgram,
+    // The builder makes a program per project, and a rebuild makes them over
+    // again; each is handed the files and the program of the build before it.
+    (
+      /** @type {string[]} */ rootNames,
+      /** @type {EXPECTED_ANY} */ compilerOptions,
+      /** @type {EXPECTED_ANY} */ compilerHost,
+      /** @type {EXPECTED_ANY} */ oldProgram,
+      /** @type {Diagnostic[]} */ configFileParsingDiagnostics,
+      /** @type {EXPECTED_ANY} */ projectReferences,
+    ) => {
+      const project = (rootNames || []).join("\0");
+      const program = ts.createSemanticDiagnosticsBuilderProgram(
+        rootNames,
+        compilerOptions,
+        keepSourceFiles(compilerHost, held.files, held.seen),
+        held.programs.get(project) || oldProgram,
+        configFileParsingDiagnostics,
+        projectReferences,
+      );
+
+      held.programs.set(project, program);
+
+      return program;
+    },
     (/** @type {Diagnostic} */ diagnostic) => diagnostics.push(diagnostic),
     () => {},
     () => {},
@@ -227,6 +281,11 @@ function buildSolution(ts, options, configFile, host, unrecoverable) {
 
   builder.build();
 
+  // A file no program asked for is one none of them holds.
+  for (const file of held.files.keys()) {
+    if (!held.seen.has(file)) held.files.delete(file);
+  }
+
   return { diagnostics, host, files, directories, writes };
 }
 
@@ -264,7 +323,7 @@ function check(ts, options, held) {
   // A solution is built rather than read: the projects it references have to
   // publish their declarations before the ones reading them can be checked.
   if (options.build) {
-    return buildSolution(ts, options, configFile, host, unrecoverable);
+    return buildSolution(ts, options, configFile, host, unrecoverable, held);
   }
 
   const overrides = {
@@ -292,7 +351,7 @@ function check(ts, options, held) {
     };
   }
 
-  const signature = `${configFile}\0${JSON.stringify(parsed.options)}`;
+  const signature = `program\0${configFile}\0${JSON.stringify(parsed.options)}`;
 
   // Nothing the last program was built from survives a change to how it is
   // built, so the whole of it is dropped rather than handed over.
@@ -307,6 +366,7 @@ function check(ts, options, held) {
       held.missing,
     );
     held.program = undefined;
+    held.programs = new Map();
   }
 
   held.seen.clear();

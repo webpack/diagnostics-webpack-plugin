@@ -38,6 +38,7 @@ export type Held = {
   missing: Set<string>;
   host: EXPECTED_ANY;
   program: EXPECTED_ANY;
+  programs: Map<string, EXPECTED_ANY>;
 };
 /**
  * @param {Options} options plugin options
