@@ -1,7 +1,7 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, resolve } from "node:path";
 
@@ -96,9 +96,9 @@ function parseFiles(files, context) {
 /**
  * @param {string | string[]} patterns patterns
  * @param {string | string[]} extensions extensions
- * @returns {string[]} globs
+ * @returns {Promise<string[]>} globs
  */
-function parseFoldersToGlobs(patterns, extensions = []) {
+async function parseFoldersToGlobs(patterns, extensions = []) {
   const extensionsList = arrify(extensions);
   const [prefix, postfix] = extensionsList.length > 1 ? ["{", "}"] : ["", ""];
   const extensionsGlob = extensionsList
@@ -115,24 +115,29 @@ function parseFoldersToGlobs(patterns, extensions = []) {
       `/**${extensionsGlob ? `/*.${prefix + extensionsGlob + postfix}` : ""}`,
     );
 
-  return arrify(patterns).flatMap((/** @type {string} */ pattern) => {
-    try {
-      // The patterns are absolute because they are prepended with the context.
-      // A folder is read as one whatever its name is made of, so this is asked
-      // before the pattern is: `[symbols]` is a directory and a character class.
-      if (statSync(pattern).isDirectory()) return asFolder(pattern);
+  const read = await Promise.all(
+    arrify(patterns).map(async (/** @type {string} */ pattern) => {
+      try {
+        // The patterns are absolute because they are prepended with the
+        // context. A folder is read as one whatever its name is made of, so
+        // this is asked before the pattern is: `[symbols]` is a directory and
+        // a character class.
+        if ((await stat(pattern)).isDirectory()) return asFolder(pattern);
 
-      return pattern;
-    } catch {
-      // A glob already says what it covers, whether or not anything is there.
-      if (picomatch.scan(pattern).isGlob) return pattern;
+        return pattern;
+      } catch {
+        // A glob already says what it covers, whether or not anything is there.
+        if (picomatch.scan(pattern).isGlob) return pattern;
 
-      // A path that is not there yet is one the build may go on to write, and
-      // the globs are read once. Naming it both ways is what covers a folder
-      // that appears later without missing a file of the same name.
-      return [pattern, asFolder(pattern)];
-    }
-  });
+        // A path that is not there yet is one the build may go on to write, and
+        // the globs are read once. Naming it both ways is what covers a folder
+        // that appears later without missing a file of the same name.
+        return [pattern, asFolder(pattern)];
+      }
+    }),
+  );
+
+  return read.flat();
 }
 
 /**

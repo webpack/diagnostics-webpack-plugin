@@ -1,9 +1,10 @@
-import { readdirSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative } from "node:path";
 
 import picomatch from "picomatch";
-import { globSync } from "tinyglobby";
+import { glob } from "tinyglobby";
 
+import DiagnosticError from "./DiagnosticError.js";
 import createCheckRunner from "./check.js";
 import { getOptions, reportedAs, validateOptions } from "./options.js";
 import {
@@ -46,22 +47,45 @@ const EARLY_BATCH = 64;
 
 let compilerId = 0;
 
+// A walk two compilers are making at the same moment over the same patterns,
+// so that the tree is read once and both of them go on together — which is
+// what leaves their checks a run to share.
+/** @type {Map<string, Promise<string[]>>} */
+const walks = new Map();
+
+/**
+ * @param {string[]} wanted the globs of the files to walk for
+ * @param {string[]} exclude the globs of the files to leave out
+ * @returns {Promise<string[]>} what the tree holds of them
+ */
+function walk(wanted, exclude) {
+  const key = JSON.stringify([wanted, exclude]);
+  const running = walks.get(key);
+
+  if (running) return running;
+
+  const started = glob(wanted, { absolute: true, dot: true, ignore: exclude });
+  const forget = () => walks.delete(key);
+
+  walks.set(key, started);
+  started.then(forget, forget);
+
+  return started;
+}
+
 /**
  * Walks the file system for the files a check wants, and says which of them
  * webpack has just seen change.
  * @param {Compiler} compiler compiler
  * @param {ResolvedCheck} check the check to collect the files of
- * @returns {{ lint: string[], keep: string[] }} the files to lint, and the ones to report from the last compilation
+ * @returns {Promise<{ lint: string[], keep: string[] }>} the files to lint, and the ones to report from the last compilation
  */
-function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
+async function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
+  // Read before the walk, which is what the build goes on building through.
+  const { modifiedFiles } = compiler;
   // The walk is what says which files there are: one webpack never built is
   // one it cannot report as added, changed or gone either.
-  const found = globSync(wanted, {
-    absolute: true,
-    dot: true,
-    ignore: exclude,
-  });
-  const { modifiedFiles } = compiler;
+  const found = await walk(wanted, exclude);
 
   // A check that cannot say which file a result came from has nothing to report
   // a file it was not given from, so it is given all of them every time. One
@@ -132,15 +156,15 @@ function globRoots({ filesSource, wanted }) {
  * @param {Compiler} compiler compiler
  * @param {ResolvedCheck} check the check that reads it
  * @param {string[]} writes the paths the check itself writes
- * @returns {boolean} whether the whole of it can be watched
+ * @returns {Promise<boolean>} whether the whole of it can be watched
  */
-function canWatch(directory, compiler, check, writes) {
+async function canWatch(directory, compiler, check, writes) {
   const written = [compiler.outputPath, ...writes];
 
   if (written.some((path) => contains(directory, path))) return false;
 
   try {
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
       if (
         entry.isDirectory() &&
         check.isExcluded(join(directory, entry.name))
@@ -199,7 +223,7 @@ class DiagnosticsWebpackPlugin {
       validateOptions(compiler, this.given, this.options.checks);
     });
 
-    /** @type {ResolvedCheck[] | undefined} */
+    /** @type {Promise<ResolvedCheck[]> | undefined} */
     let checks;
 
     // Resolved on the first build rather than here, so that an option the
@@ -208,8 +232,10 @@ class DiagnosticsWebpackPlugin {
       if (!checks) {
         const context = this.getContext(compiler);
 
-        checks = this.options.checks.map((check) =>
-          this.resolveCheck(compiler, context, check),
+        checks = Promise.all(
+          this.options.checks.map((check) =>
+            this.resolveCheck(compiler, context, check),
+          ),
         );
       }
 
@@ -218,22 +244,22 @@ class DiagnosticsWebpackPlugin {
 
     // A build is nothing but a first compilation, so `lintOnStart` cannot
     // silence one without silencing the plugin.
-    compiler.hooks.run.tapPromise(this.key, (compiler) =>
-      this.run(compiler, getChecks()),
+    compiler.hooks.run.tapPromise(this.key, async (compiler) =>
+      this.run(compiler, await getChecks()),
     );
 
     // A lint integration whose bundler reaches a file only once something
     // requests it defaults this off; webpack's first build walks all of them.
     let skipping = !this.options.lintOnStart;
 
-    compiler.hooks.watchRun.tapPromise(this.key, (compiler) => {
+    compiler.hooks.watchRun.tapPromise(this.key, async (compiler) => {
       if (skipping) {
         skipping = false;
 
-        return Promise.resolve();
+        return;
       }
 
-      return this.run(compiler, getChecks());
+      return this.run(compiler, await getChecks());
     });
   }
 
@@ -241,9 +267,9 @@ class DiagnosticsWebpackPlugin {
    * @param {Compiler} compiler compiler
    * @param {string} context context
    * @param {EnabledCheck} check the check to resolve the globs of
-   * @returns {ResolvedCheck} the check with its globs resolved
+   * @returns {Promise<ResolvedCheck>} the check with its globs resolved
    */
-  resolveCheck(compiler, context, { id, name, adapter, options }) {
+  async resolveCheck(compiler, context, { id, name, adapter, options }) {
     const resourceQueries = arrify(options.resourceQueryExclude || []);
 
     /** @type {CheckOptions} */
@@ -265,13 +291,13 @@ class DiagnosticsWebpackPlugin {
       ),
     };
 
-    const wanted = parseFoldersToGlobs(
-      /** @type {string[]} */ (resolved.files),
-      resolved.extensions,
-    );
-    const exclude = parseFoldersToGlobs(
-      /** @type {string[]} */ (resolved.exclude),
-    );
+    const [wanted, exclude] = await Promise.all([
+      parseFoldersToGlobs(
+        /** @type {string[]} */ (resolved.files),
+        resolved.extensions,
+      ),
+      parseFoldersToGlobs(/** @type {string[]} */ (resolved.exclude)),
+    ]);
 
     return {
       id,
@@ -413,6 +439,9 @@ class DiagnosticsWebpackPlugin {
           handOver,
           late,
           runner,
+          // The walk this check's files come from, for the ones that walk.
+          /** @type {Promise<void> | undefined} */
+          collecting: undefined,
         };
       });
 
@@ -468,15 +497,23 @@ class DiagnosticsWebpackPlugin {
         }
       }
 
-      // Nothing globbed from the file system waits on the module graph.
+      // Nothing globbed from the file system waits on the module graph, and
+      // the walk itself is what webpack goes on building through.
       for (const check of runners) {
         if (check.filesSource === "modules") continue;
 
-        const collected = collectFromFileSystem(compiler, check);
-
-        check.pending.push(...collected.lint);
-        check.kept.push(...collected.keep);
-        check.flush(true);
+        check.collecting = collectFromFileSystem(compiler, check).then(
+          (collected) => {
+            check.pending.push(...collected.lint);
+            check.kept.push(...collected.keep);
+            check.flush(true);
+          },
+          (err) => {
+            compilation.errors.push(
+              new DiagnosticError(check.name, err.message),
+            );
+          },
+        );
       }
 
       compilation.hooks.finishModules.tap(this.key, () => {
@@ -487,6 +524,10 @@ class DiagnosticsWebpackPlugin {
       compilation.hooks.processAssets.tapAsync(
         this.key,
         async (_, callback) => {
+          // Every walk is done by here, so a check has the files it covers
+          // before it is asked what it found in them.
+          await Promise.all(runners.map((check) => check.collecting));
+
           /** @type {Map<string, string[]>} */
           const outputReports = new Map();
 
@@ -495,8 +536,12 @@ class DiagnosticsWebpackPlugin {
            * configured to, which is not always the same set of files.
            * @param {ResolvedCheck} check the check that read them
            * @param {Dependencies} dependencies what a run of it read
+           * @returns {Promise<void>} when the watcher has been told
            */
-          const watch = (check, { read, missing, directories, writes }) => {
+          const watch = async (
+            check,
+            { read, missing, directories, writes },
+          ) => {
             // Each one is spelled the way the platform does: a watcher looks a
             // change up under the path it joined, not the one it was given.
             for (const file of read) {
@@ -513,9 +558,13 @@ class DiagnosticsWebpackPlugin {
 
             // A file that does not exist yet is under no watch of its own, so
             // the directory a check would find it in answers for it.
-            const roots = [...globRoots(check), ...directories].filter(
-              (directory) => canWatch(directory, compiler, check, writes),
+            const candidates = [...globRoots(check), ...directories];
+            const watchable = await Promise.all(
+              candidates.map((directory) =>
+                canWatch(directory, compiler, check, writes),
+              ),
             );
+            const roots = candidates.filter((_, at) => watchable[at]);
 
             for (const directory of roots) {
               // Watching a directory covers what is under it, so one inside
@@ -540,7 +589,10 @@ class DiagnosticsWebpackPlugin {
             // reads this time is not known until it is done, by which point
             // the watcher has been handed its list.
             if (check.late) {
-              watch(check, /** @type {Dependencies} */ (readLast.get(id)));
+              await watch(
+                check,
+                /** @type {Dependencies} */ (readLast.get(id)),
+              );
 
               afterBuild.push(() => {
                 check.handOver();
@@ -562,7 +614,7 @@ class DiagnosticsWebpackPlugin {
             } = report;
 
             readLast.set(id, { read, missing, directories, writes });
-            watch(check, report);
+            await watch(check, report);
 
             // `reportAs` has already dropped whatever it reports as `false`,
             // so what is left only needs putting where it belongs.

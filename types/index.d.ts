@@ -69,13 +69,13 @@ declare class DiagnosticsWebpackPlugin {
    * @param {Compiler} compiler compiler
    * @param {string} context context
    * @param {EnabledCheck} check the check to resolve the globs of
-   * @returns {ResolvedCheck} the check with its globs resolved
+   * @returns {Promise<ResolvedCheck>} the check with its globs resolved
    */
   resolveCheck(
     compiler: Compiler,
     context: string,
     { id, name, adapter, options }: EnabledCheck,
-  ): ResolvedCheck;
+  ): Promise<ResolvedCheck>;
   /**
    * @param {ResolvedCheck} check the check to create a runner for
    * @param {Compilation} compilation compilation
