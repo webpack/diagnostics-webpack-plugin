@@ -6,7 +6,9 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { countThreads, createPool } from "../threads.js";
-import { importFrom, omitPluginOptions } from "../utils.js";
+import { omitPluginOptions } from "../utils.js";
+
+import { loadESLintClass } from "./eslint-worker.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -224,12 +226,11 @@ async function create({ options, compilation }) {
   const fix = Boolean(eslintOptions.fix);
   const specifier = options.eslintPath || "eslint";
 
-  const eslintModule = await importFrom(specifier);
-
   /** @type {ESLintClass} */
-  const ESLint = await eslintModule.loadESLint({
-    useFlatConfig: options.configType === "flat",
-  });
+  const ESLint = await loadESLintClass(
+    specifier,
+    options.configType === "flat",
+  );
 
   /** @type {((results: LintResult[]) => Promise<LintResult[]>) | undefined} */
   let applySuppressions;

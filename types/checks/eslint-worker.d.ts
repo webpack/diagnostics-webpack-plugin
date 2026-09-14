@@ -8,6 +8,17 @@ export type ESLintInstance = InstanceType<ESLintClass>;
  */
 export function lintFiles(files: string[]): Promise<LintResult[]>;
 /**
+ * The `ESLint` class the given eslint answers with, which is what says its
+ * version and applies its fixes as well as what lints.
+ * @param {string} path what names the eslint to load
+ * @param {boolean} flat whether to load it in flat mode
+ * @returns {Promise<ESLintClass>} the class to lint through
+ */
+export function loadESLintClass(
+  path: string,
+  flat: boolean,
+): Promise<ESLintClass>;
+/**
  * @param {string} path what names the eslint to load
  * @param {ESLintOptions} options the options it is constructed with
  * @param {boolean} flat whether it is loaded in flat mode

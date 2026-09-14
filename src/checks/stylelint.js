@@ -11,11 +11,7 @@ import {
   parseFiles,
 } from "../utils.js";
 
-import {
-  getStylelint as getStylelintInstance,
-  lintFiles,
-  setup,
-} from "./stylelint-worker.js";
+import { createLinter } from "./stylelint-worker.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -90,11 +86,14 @@ function getStylelintOptions(options) {
  * @returns {Loaded} loaded stylelint
  */
 function loadStylelint(options) {
-  setup(options, getStylelintOptions(options));
+  const linter = createLinter(
+    String(options.stylelintPath || "stylelint"),
+    getStylelintOptions(options),
+  );
 
   return {
-    getStylelint: getStylelintInstance,
-    lintFiles,
+    getStylelint: linter.getStylelint,
+    lintFiles: linter.lintFiles,
     cleanup: async () => {},
     threads: 1,
   };
