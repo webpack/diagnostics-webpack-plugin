@@ -73,12 +73,12 @@ export function parseFiles(files: string | string[], context: string): string[];
 /**
  * @param {string | string[]} patterns patterns
  * @param {string | string[]} extensions extensions
- * @returns {string[]} globs
+ * @returns {Promise<string[]>} globs
  */
 export function parseFoldersToGlobs(
   patterns: string | string[],
   extensions?: string | string[],
-): string[];
+): Promise<string[]>;
 /**
  * Globs only know the forward slash, so a path is compared and matched as one.
  * @param {string} file a path

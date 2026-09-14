@@ -63,6 +63,8 @@ function getHeld(compiler, id) {
 }
 
 /**
+ * Read synchronously because TypeScript's own host is: the compiler calls
+ * `getSourceFile` and waits for a source file, with nothing to await into.
  * @param {string} file the file to read the state of
  * @returns {string | undefined} what tells one write of it from the next
  */
