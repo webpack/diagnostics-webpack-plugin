@@ -90,6 +90,32 @@ describe("incremental", () => {
     }
   });
 
+  it("should turn the tool's cache off where a rule reads other files", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    const compiler = pack("watch", { cache: true, eslintPath });
+
+    watch = compiler.watch({}, (err) => {
+      assert.strictEqual(err, null);
+
+      const built = require(eslintPath)._built;
+
+      const asked = built.findIndex((one) => one.cache === true);
+
+      // A cache keyed on one file's own contents cannot answer for a rule that
+      // read another, so the linter is made again without one.
+      assert.ok(asked >= 0, "a linter was built with the cache this asked for");
+      assert.ok(
+        built.slice(asked + 1).some((one) => one.cache === false),
+        "and another was built without it",
+      );
+      done();
+    });
+  });
+
   it("should stop reporting a file that leaves the graph", (t, done) => {
     writeFileSync(leaf, "const leaf = 1;\n");
     writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");

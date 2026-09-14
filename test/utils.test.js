@@ -2,13 +2,29 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
-import { parseFiles, parseFoldersToGlobs, toPosixPath } from "../src/utils.js";
+import {
+  arrify,
+  parseFiles,
+  parseFoldersToGlobs,
+  toPosixPath,
+} from "../src/utils.js";
 
 // `parseFoldersToGlobs` stats what it is given, so the fixtures have to exist.
 const directory = join(import.meta.dirname, "fixtures");
 const file = join(import.meta.dirname, "fixtures", "good.js");
 
 describe("utils", () => {
+  it("arrify should answer with an array for whatever it is given", () => {
+    assert.deepStrictEqual(arrify(undefined), []);
+    assert.deepStrictEqual(arrify(null), []);
+    assert.deepStrictEqual(arrify(["a"]), ["a"]);
+    // A string is one value rather than a sequence of characters, which is the
+    // one thing iterating it would get wrong.
+    assert.deepStrictEqual(arrify("ab"), ["ab"]);
+    assert.deepStrictEqual(arrify(new Set(["a", "b"])), ["a", "b"]);
+    assert.deepStrictEqual(arrify(42), [42]);
+  });
+
   it("toPosixPath should turn every separator into a forward slash", () => {
     assert.strictEqual(toPosixPath("/home/user/a.css"), "/home/user/a.css");
     assert.strictEqual(

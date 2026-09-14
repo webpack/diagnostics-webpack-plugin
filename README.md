@@ -1137,11 +1137,35 @@ is written as one entry in `checks`:
  };
 ```
 
-**The check runs in the build's own process.** That plugin forks one, which is
-why it has a `memoryLimit` and a `profile` of its own; here the program is kept
-between rebuilds instead, so a rebuild type checks what the change reaches
-rather than the project again. What that costs and saves is under
-[the TypeScript check](#typescript).
+**The check runs on a worker thread rather than in a process of its own.** That
+plugin forks one, which is why it has a `memoryLimit` and a `profile`; a thread
+shares the build's heap and its copy of TypeScript, so neither is needed here.
+The program is kept between rebuilds either way. What that costs and saves is
+under [the TypeScript check](#typescript).
+
+Over a generated 300-file project, three runs of each:
+
+|                                        | Build   | Edit to report, watching | Peak memory, process tree |
+| :------------------------------------- | :------ | :----------------------- | :------------------------ |
+| `fork-ts-checker-webpack-plugin@9.1.0` | 2232 ms | 138 ms                   | 429–488 MB                |
+| Here                                   | 2227 ms | 131 ms                   | **269–301 MB**            |
+
+The time is the same within the run-to-run spread; the memory is not, and that
+is the thread rather than anything clever.
+
+**It is a drop-in, and was checked as one** against a project neither of us
+wrote — the `fork-ts-checker-webpack-plugin` example that `ts-loader` ships,
+which is React and TSX through `ts-loader`. Swapping the plugin for
+`{ use: "typescript" }` and nothing else reported the same `TS2322` at the same
+line and column. Three things to expect while doing it:
+
+- **webpack must be 5.106 or newer**, which is what the plugin requires at all.
+- **`npm` refuses to install alongside ESLint 8.** The `eslint` peer here is
+  optional but ranged `^9 || ^10`, and npm resolves an optional peer it can see,
+  so a project pinned to 8 needs its ESLint updated — or
+  `--legacy-peer-deps` — even when no ESLint check is configured.
+- **`fork-ts-checker-notifier-webpack-plugin` has nothing to listen to.** It taps
+  that plugin's own hooks, so it goes when that plugin does.
 
 | `fork-ts-checker-webpack-plugin`    | Here                                                                                                                                                                                                                                                                     |
 | :---------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

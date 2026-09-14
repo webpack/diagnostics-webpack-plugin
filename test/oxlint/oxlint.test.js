@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import pack from "./utils/pack.js";
@@ -88,6 +89,18 @@ describe("oxlint", () => {
 
     assert.strictEqual(stats.hasErrors(), true);
     assert.match(stats.compilation.errors[0].message, /\[oxlint\]/u);
+  });
+
+  it("should say so when it answers with something other than JSON", async () => {
+    const stats = await pack("bad", {
+      oxlintPath: join(import.meta.dirname, "mock", "oxlint-gibberish"),
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), true);
+    assert.match(
+      stats.compilation.errors[0].message,
+      /other than the JSON it was asked for/u,
+    );
   });
 
   it("should say so when it cannot be found", async () => {
