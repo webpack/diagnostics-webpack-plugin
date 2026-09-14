@@ -19,7 +19,7 @@ import { omitPluginOptions } from "../utils.js";
  */
 
 /**
- * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY>, readAt: number }} Held
+ * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY>, readAt: number, dropped: Map<string, { text: string, time: Date }> }} Held
  */
 
 const nodeRequire = createRequire(import.meta.url);
@@ -54,6 +54,7 @@ function getHeld(compiler, id) {
       program: undefined,
       programs: new Map(),
       readAt: 0,
+      dropped: new Map(),
     };
     checks.set(id, held);
   }
@@ -179,6 +180,46 @@ function getTypeScriptOptions(options) {
 }
 
 /**
+ * What a mode writes, and what it has to ask the compiler for so that there is
+ * something to write. A check reports rather than builds, so nothing is written
+ * unless a mode says otherwise.
+ * @param {Options} options options
+ * @returns {{ compilerOptions: EXPECTED_ANY, keeps: (file: string) => boolean }} what to ask for, and what to let through
+ */
+function writing(options) {
+  const mode = options.mode || (options.build ? "write-dts" : "readonly");
+
+  if (mode === "readonly") {
+    // `tsc -b` refuses `noEmit` with TS6310, so a solution that writes nothing
+    // is one whose writes are dropped rather than one that never made them.
+    return {
+      compilerOptions: options.build ? {} : { noEmit: true },
+      keeps: () => false,
+    };
+  }
+
+  const compilerOptions = {
+    declaration: true,
+    emitDeclarationOnly: mode === "write-dts",
+    noEmit: false,
+  };
+
+  if (mode === "write-references") {
+    return { compilerOptions, keeps: () => true };
+  }
+
+  const suffixes =
+    mode === "write-dts"
+      ? [".tsbuildinfo", ".d.ts", ".d.ts.map"]
+      : [".tsbuildinfo"];
+
+  return {
+    compilerOptions,
+    keeps: (file) => suffixes.some((suffix) => file.endsWith(suffix)),
+  };
+}
+
+/**
  * Every project a config file references, built the way `tsc -b` does — which
  * is what a reference is for: a project reads the declarations of the one it
  * references rather than its sources.
@@ -199,9 +240,11 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
   /** @type {string[]} */
   const writes = [];
 
+  const emit = writing(options);
   const overrides = {
     ...getTypeScriptOptions(options),
     ...options.compilerOptions,
+    ...emit.compilerOptions,
   };
   const signature = `build\0${configFile}\0${JSON.stringify(overrides)}`;
 
@@ -211,6 +254,7 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
     held.files = new Map();
     held.programs = new Map();
     held.readAt = 0;
+    held.dropped = new Map();
   }
 
   held.seen.clear();
@@ -226,7 +270,35 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
   // it finished writing.
   const system = {
     ...ts.sys,
+    // What the build writes is what `mode` lets through. The rest is kept
+    // where only this build can read it: a project reads the declarations of
+    // the one it references, so dropping them outright would leave it
+    // reporting that an output it needs was never built.
+    writeFile: (
+      /** @type {string} */ file,
+      /** @type {string} */ text,
+      /** @type {boolean=} */ byteOrderMark,
+    ) => {
+      if (emit.keeps(file)) {
+        ts.sys.writeFile(file, text, byteOrderMark);
+
+        return;
+      }
+
+      held.dropped.set(file, { text, time: new Date() });
+    },
+    readFile: (/** @type {string} */ file, /** @type {string=} */ encoding) => {
+      const kept = held.dropped.get(file);
+
+      return kept ? kept.text : ts.sys.readFile(file, encoding);
+    },
+    fileExists: (/** @type {string} */ file) =>
+      held.dropped.has(file) || ts.sys.fileExists(file),
     getModifiedTime: (/** @type {string} */ file) => {
+      const kept = held.dropped.get(file);
+
+      if (kept) return kept.time;
+
       const modified = ts.sys.getModifiedTime(file);
 
       if (
@@ -272,12 +344,11 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
     () => {},
     () => {},
   );
-  const builder = ts.createSolutionBuilder(builderHost, [configFile], {
-    ...overrides,
-    // The declarations are what the next project reads; the JavaScript is
-    // webpack's to write, and a later `tsc -b` still writes its own.
-    emitDeclarationOnly: true,
-  });
+  const builder = ts.createSolutionBuilder(
+    builderHost,
+    [configFile],
+    overrides,
+  );
   const order = builder.getBuildOrder();
 
   // Read before the build, so that a project it stops short of is watched too.
@@ -355,11 +426,13 @@ function check(ts, options, held) {
     return buildSolution(ts, options, configFile, host, unrecoverable, held);
   }
 
+  // A check reports and webpack emits, unless `mode` asks for something to be
+  // written as well.
+  const emit = writing(options);
   const overrides = {
     ...getTypeScriptOptions(options),
     ...options.compilerOptions,
-    // A check reports; webpack emits.
-    noEmit: true,
+    ...emit.compilerOptions,
   };
 
   const parsed = ts.getParsedCommandLineOfConfigFile(configFile, overrides, {
@@ -437,6 +510,30 @@ function check(ts, options, held) {
     ]),
   ];
 
+  /** @type {string[]} */
+  const writes = [];
+
+  if (!overrides.noEmit) {
+    for (const written of [
+      parsed.options.outDir,
+      parsed.options.declarationDir,
+      parsed.options.tsBuildInfoFile,
+    ]) {
+      if (written) writes.push(String(written));
+    }
+
+    held.program.emit(
+      undefined,
+      (
+        /** @type {string} */ file,
+        /** @type {string} */ text,
+        /** @type {boolean=} */ byteOrderMark,
+      ) => {
+        if (emit.keeps(file)) ts.sys.writeFile(file, text, byteOrderMark);
+      },
+    );
+  }
+
   // A file this program never asked for is one it no longer holds.
   for (const file of held.files.keys()) {
     if (!held.seen.has(file)) held.files.delete(file);
@@ -451,7 +548,7 @@ function check(ts, options, held) {
     // What `include` covers, which is where a file the program has never held
     // can appear.
     directories: Object.keys(parsed.wildcardDirectories || {}),
-    writes: [],
+    writes,
   };
 }
 /**

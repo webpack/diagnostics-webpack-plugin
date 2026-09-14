@@ -24,6 +24,13 @@ export type Held = {
   program: EXPECTED_ANY;
   programs: Map<string, EXPECTED_ANY>;
   readAt: number;
+  dropped: Map<
+    string,
+    {
+      text: string;
+      time: Date;
+    }
+  >;
 };
 /**
  * The program the config file describes, with emit off: webpack writes the
