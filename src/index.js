@@ -257,7 +257,11 @@ class DiagnosticsWebpackPlugin {
       files: parseFiles(options.files || "", context),
       resourceQueryExclude: resourceQueries.map(
         (/** @type {RegExp | string} */ item) =>
-          item instanceof RegExp ? item : new RegExp(item),
+          // Every query is asked of the same regexp, and `g` and `y` carry
+          // where the last answer left off into the next one.
+          item instanceof RegExp
+            ? new RegExp(item.source, item.flags.replaceAll(/[gy]/gu, ""))
+            : new RegExp(item),
       ),
     };
 
