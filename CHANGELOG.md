@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.1
+
+### Patch Changes
+
+- `resourceQueryExclude` takes a string as well as a regexp, which the schema refused on its own and accepted unchecked inside a list. (by [@alexander-akait](https://github.com/alexander-akait) in [#360](https://github.com/webpack/diagnostics-webpack-plugin/pull/360))
+
 ## 1.0.0
 
 ### Major Changes
