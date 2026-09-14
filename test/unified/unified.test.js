@@ -56,19 +56,6 @@ describe("unified plugin", () => {
     );
   });
 
-  it("should validate at once where webpack has no validate hook", () => {
-    // webpack below 5.106 has neither the hook nor `compiler.validate`.
-    const compiler = {
-      name: "no-validate-hook",
-      hooks: { run: { tapPromise() {} }, watchRun: { tapPromise() {} } },
-    };
-
-    assert.throws(
-      () => new DiagnosticsPlugin({ checks: [] }).apply(compiler),
-      /options\.checks should be a non-empty array/u,
-    );
-  });
-
   it("should accept a check named rather than written out", () => {
     // A check with nothing to configure needs no entry of its own, and still
     // reads the options written once for every check.

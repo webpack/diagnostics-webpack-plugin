@@ -184,16 +184,11 @@ class DiagnosticsWebpackPlugin {
     // this differentiates one from the other when being cached.
     this.key = compiler.name || `${this.key}_${(compilerId += 1)}`;
 
-    const validateGiven = () => {
+    // Webpack's own hook, so its `validate: false` turns this off the way it
+    // does for webpack's plugins.
+    compiler.hooks.validate.tap(this.key, () => {
       validateOptions(compiler, this.given, this.options.checks);
-    };
-
-    // The hook, and webpack's `validate: false` with it, arrived in 5.106.
-    if (compiler.hooks.validate) {
-      compiler.hooks.validate.tap(this.key, validateGiven);
-    } else {
-      validateGiven();
-    }
+    });
 
     /** @type {ResolvedCheck[] | undefined} */
     let checks;
