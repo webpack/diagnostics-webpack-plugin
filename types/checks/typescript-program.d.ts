@@ -23,6 +23,7 @@ export type Held = {
   host: EXPECTED_ANY;
   program: EXPECTED_ANY;
   programs: Map<string, EXPECTED_ANY>;
+  readAt: number;
 };
 /**
  * The program the config file describes, with emit off: webpack writes the
