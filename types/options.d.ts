@@ -115,6 +115,10 @@ export type PluginOptions = {
 export type Options = SharedOptions & PluginOptions;
 export type EnabledCheck = {
   /**
+   * what tells this entry from another of the same check
+   */
+  id: string;
+  /**
    * check name
    */
   name: string;

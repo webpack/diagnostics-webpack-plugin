@@ -21,6 +21,10 @@ export type CheckContext = {
    */
   key: string;
   /**
+   * a key unique to this entry among the checks the plugin runs
+   */
+  id: string;
+  /**
    * resolved options for this check
    */
   options: CheckOptions;
@@ -190,6 +194,7 @@ export type CheckAdapter = {
 /**
  * @typedef {object} CheckContext
  * @property {string} key a key unique to the compiler the check runs for
+ * @property {string} id a key unique to this entry among the checks the plugin runs
  * @property {CheckOptions} options resolved options for this check
  * @property {Compilation} compilation the compilation being linted
  */

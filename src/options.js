@@ -66,6 +66,7 @@ const PLUGIN_NAME = "Diagnostics Webpack Plugin";
 
 /**
  * @typedef {object} EnabledCheck
+ * @property {string} id what tells this entry from another of the same check
  * @property {string} name check name
  * @property {CheckAdapter} adapter the adapter running it
  * @property {CheckOptions} options options resolved for this check
@@ -194,7 +195,7 @@ function getOptions(pluginOptions) {
     ...shared
   } = pluginOptions;
 
-  const enabled = entries.map((entry) => {
+  const enabled = entries.map((entry, index) => {
     // A check with nothing to configure is named rather than written out.
     const { use, ...own } = typeof entry === "string" ? { use: entry } : entry;
     const adapter = toAdapter(use);
@@ -202,7 +203,14 @@ function getOptions(pluginOptions) {
     /** @type {CheckOptions} */
     const options = { ...adapter.defaults, ...shared, ...own };
 
-    return { name: adapter.name, adapter, options };
+    // Two entries can run the same tool under different options, so what each
+    // of them is remembered by is where it sits rather than what it runs.
+    return {
+      id: `${adapter.name}\0${index}`,
+      name: adapter.name,
+      adapter,
+      options,
+    };
   });
 
   return { context, lintOnStart, checks: enabled };

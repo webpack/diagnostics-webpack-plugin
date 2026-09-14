@@ -103,8 +103,10 @@ function canThread(options) {
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} typescript check
  */
-async function create({ key, options, compilation }) {
-  const id = `${key}\0${options.configFile || ""}`;
+async function create({ key, id: entry, options, compilation }) {
+  // The program is this entry's: another check of the same tool reads the same
+  // config file under options of its own.
+  const id = `${key}\0${entry}`;
   const worker = canThread(options)
     ? getWorker(compilation.compiler, id, options)
     : null;
