@@ -11,6 +11,7 @@ declare namespace _default {
   }
   export function defaultExclude(): string;
   export function resultPath(result: EXPECTED_ANY): string;
+  export function readsAcrossFiles(compiler: EXPECTED_ANY): boolean;
   export { create };
   export { getESLintOptions };
 }
@@ -38,4 +39,7 @@ export function getESLintOptions(options: Options): ESLintOptions;
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} eslint check
  */
-declare function create({ options }: CheckContext): Promise<CheckInstance>;
+declare function create({
+  options,
+  compilation,
+}: CheckContext): Promise<CheckInstance>;

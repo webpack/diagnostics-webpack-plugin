@@ -254,6 +254,8 @@ type cache = boolean;
 
 The cache is enabled by default to decrease execution time.
 
+It is turned off for an ESLint check doing [typed linting](#eslint): a cache keyed on one file's own contents cannot answer for a rule that read another.
+
 #### `cacheLocation`
 
 - Type:
@@ -567,6 +569,8 @@ Alongside the shared options you can pass any [ESLint Node.js API option](https:
 [`threads`](#threads) reaches ESLint as its own `concurrency` from 9.34.0 under flat config, and an older ESLint or an `eslintrc` one is pooled instead. Write `concurrency` yourself and that is what ESLint is given, whatever `threads` says. Note that webpack spells this idea `parallelism`, and uses the word concurrency for something else again — bounded work on one thread.
 
 A rebuild lints only the files webpack rebuilt and reports the rest from the previous run, so [`lintOnStart`](#lintonstart) is only worth setting to start a watch run quiet.
+
+**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints every file the check covers, and ESLint's own [`cache`](#cache) is turned off for it, since that cache is keyed on each file's own contents and would answer for a type it never read.
 
 ### `configType`
 

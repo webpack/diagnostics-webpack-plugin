@@ -63,8 +63,16 @@ function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
   const { modifiedFiles } = compiler;
 
   // A check that cannot say which file a result came from has nothing to report
-  // a file it was not given from, so it is given all of them every time.
-  if (!modifiedFiles || !adapter.resultPath) return { lint: found, keep: [] };
+  // a file it was not given from, so it is given all of them every time. One
+  // that reads other files to answer for one is given all of them too: what it
+  // said of a file it did not look at again was true of the files as they were.
+  if (
+    !modifiedFiles ||
+    !adapter.resultPath ||
+    (adapter.readsAcrossFiles && adapter.readsAcrossFiles(compiler))
+  ) {
+    return { lint: found, keep: [] };
+  }
 
   const changed = new Set([...modifiedFiles].map((file) => toPosixPath(file)));
   /** @type {{ lint: string[], keep: string[] }} */
@@ -430,8 +438,13 @@ class DiagnosticsWebpackPlugin {
             ).every((reg) => !reg.test(query));
 
             if (isFileNotListed && isFileWanted && isQueryNotExclude) {
+              const keepable =
+                rebuilt ||
+                !check.adapter.readsAcrossFiles ||
+                !check.adapter.readsAcrossFiles(compiler);
+
               files.push(file);
-              (rebuilt ? check.pending : check.kept).push(file);
+              (rebuilt || !keepable ? check.pending : check.kept).push(file);
               check.flush();
             }
           }
