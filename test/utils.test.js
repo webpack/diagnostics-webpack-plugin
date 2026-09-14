@@ -80,4 +80,19 @@ describe("utils", () => {
   it("parseFoldersToGlobs should return unmodified globs for globs (ignoring extensions)", () => {
     assert.deepStrictEqual(parseFoldersToGlobs("**.notjs", "js"), ["**.notjs"]);
   });
+
+  it("parseFoldersToGlobs should cover a path that is not there yet both ways", () => {
+    const absent = join(directory, "not-written-yet");
+
+    // Nothing says whether a path the build has still to write is a file or a
+    // folder, and the globs are read once.
+    assert.deepStrictEqual(parseFoldersToGlobs(absent, "js"), [
+      absent,
+      `${absent}/**/*.js`,
+    ]);
+    assert.deepStrictEqual(parseFoldersToGlobs(absent), [
+      absent,
+      `${absent}/**`,
+    ]);
+  });
 });

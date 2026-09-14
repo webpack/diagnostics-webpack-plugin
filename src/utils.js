@@ -7,6 +7,8 @@ import { dirname, isAbsolute, resolve } from "node:path";
 
 import { pathToFileURL } from "node:url";
 
+import picomatch from "picomatch";
+
 const nodeRequire = createRequire(import.meta.url);
 
 /** @typedef {import("webpack").Compiler} Compiler */
@@ -103,23 +105,33 @@ function parseFoldersToGlobs(patterns, extensions = []) {
     .map((/** @type {string} */ extension) => extension.replace(/^\./u, ""))
     .join(",");
 
-  return arrify(patterns).map((/** @type {string} */ pattern) => {
+  /**
+   * @param {string} pattern a path naming a folder
+   * @returns {string} what matches everything the folder holds
+   */
+  const asFolder = (pattern) =>
+    pattern.replace(
+      /[/\\]*?$/u,
+      `/**${extensionsGlob ? `/*.${prefix + extensionsGlob + postfix}` : ""}`,
+    );
+
+  return arrify(patterns).flatMap((/** @type {string} */ pattern) => {
     try {
       // The patterns are absolute because they are prepended with the context.
-      const stats = statSync(pattern);
-      /* istanbul ignore else */
-      if (stats.isDirectory()) {
-        return pattern.replace(
-          /[/\\]*?$/u,
-          `/**${
-            extensionsGlob ? `/*.${prefix + extensionsGlob + postfix}` : ""
-          }`,
-        );
-      }
+      // A folder is read as one whatever its name is made of, so this is asked
+      // before the pattern is: `[symbols]` is a directory and a character class.
+      if (statSync(pattern).isDirectory()) return asFolder(pattern);
+
+      return pattern;
     } catch {
-      // Return the pattern as is on error.
+      // A glob already says what it covers, whether or not anything is there.
+      if (picomatch.scan(pattern).isGlob) return pattern;
+
+      // A path that is not there yet is one the build may go on to write, and
+      // the globs are read once. Naming it both ways is what covers a folder
+      // that appears later without missing a file of the same name.
+      return [pattern, asFolder(pattern)];
     }
-    return pattern;
   });
 }
 
