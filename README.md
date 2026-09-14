@@ -875,6 +875,7 @@ A reference is read through the declarations the referenced project publishes,
 so building one is how the next is checked at all — the build therefore writes
 each project's `.d.ts` and its `.tsbuildinfo`, and nothing else. The JavaScript
 stays webpack's to write: a later `tsc -b` of your own still emits it.
+[`mode`](#mode) says so in full, and can say otherwise.
 
 The cost is a `tsc -b` pass rather than the kept program the check uses
 otherwise. Over five projects and 205 files: 573 ms with nothing built yet,
@@ -883,6 +884,38 @@ around 200 ms on every rebuild for as long as an error stands, since a project
 that fails is never up to date. Pair it with
 [`reportAs: "log"`](#reportas) if you would rather a watch rebuild did not wait
 for that.
+
+### `mode`
+
+- Type:
+
+```ts
+type mode = "readonly" | "write-tsbuildinfo" | "write-dts" | "write-references";
+```
+
+- Default: `"write-dts"` under [`build`](#build), `"readonly"` otherwise
+
+What the check writes as well as reports. A check reports, so by default a
+program writes nothing at all and a solution writes only what the next project
+has to read.
+
+| Mode                | What reaches the disk                                   |
+| :------------------ | :------------------------------------------------------ |
+| `readonly`          | Nothing.                                                |
+| `write-tsbuildinfo` | Only `.tsbuildinfo`, which a later build resumes from.  |
+| `write-dts`         | `.tsbuildinfo`, `.d.ts` and `.d.ts.map`.                |
+| `write-references`  | Everything the compiler emits, the JavaScript included. |
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "typescript", build: true, mode: "write-references" }],
+});
+```
+
+`readonly` under `build` is not the compiler's `noEmit`, which `tsc -b` refuses
+with TS6310: the build runs and its output is kept where only that build can
+read it, so a project still finds the declarations of the one it references
+while your working tree is left alone.
 
 ### `diagnosticOptions`
 
@@ -1118,7 +1151,7 @@ rather than the project again. What that costs and saves is under
 | `typescript.build`                  | [`build`](#build).                                                                                                                                                                                                                                                       |
 | `typescript.configOverwrite`        | [`compilerOptions`](#compileroptions), or any compiler option written at the top of the entry.                                                                                                                                                                           |
 | `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                                                                                                     |
-| `typescript.mode`                   | Not an option: nothing is written without `build`, and `build` writes the declarations a referenced project publishes and nothing else.                                                                                                                                  |
+| `typescript.mode`                   | [`mode`](#mode). The same four values, and the same meaning; the default under `build` is `write-dts` rather than `write-tsbuildinfo`, because a referenced project is read through the declarations it publishes.                                                       |
 | `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                                                                                                      |
 | `typescript.diagnosticOptions`      | [`diagnosticOptions`](#diagnosticoptions), spelled the same way. Every kind is reported here unless you turn one off; there, only `semantic` is on to begin with.                                                                                                        |
 | `issue.include`, `issue.exclude`    | [`ignoreDiagnostics`](#ignorediagnostics), which takes the same match of a file, a code and a severity, or a function of your own. It says what to leave out, so an `include` is written as the `exclude` of everything else.                                            |

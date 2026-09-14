@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "strict": true,
+    "target": "es2022",
+    "module": "preserve",
+    "outDir": "dist",
+    "rootDir": "src",
+    "skipLibCheck": true
+  },
+  "include": ["src"]
+}

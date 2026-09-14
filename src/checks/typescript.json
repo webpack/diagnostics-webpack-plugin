@@ -18,6 +18,10 @@
       "description": "Build the projects the config file references first, the way `tsc -b` does, and report what the whole solution finds.",
       "type": "boolean"
     },
+    "mode": {
+      "description": "What the check writes as well as reports: `readonly` writes nothing, `write-tsbuildinfo` writes only `.tsbuildinfo`, `write-dts` writes declarations with it, and `write-references` writes everything the compiler emits. Defaults to `write-dts` under `build`, where a project reads the declarations of the one it references, and `readonly` otherwise.",
+      "enum": ["readonly", "write-tsbuildinfo", "write-dts", "write-references"]
+    },
     "diagnosticOptions": {
       "description": "Which kinds of diagnostic to report. Every kind is reported unless it is turned off here; `build` reports the whole of what it finds either way.",
       "type": "object",
