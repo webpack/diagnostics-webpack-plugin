@@ -1,6 +1,6 @@
 {
   "name": "diagnostics-webpack-plugin",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Runs linters, type checkers and other diagnostic tools over your sources during the webpack build",
   "keywords": [
     "diagnostics",
