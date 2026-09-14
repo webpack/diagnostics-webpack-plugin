@@ -43,6 +43,12 @@ export type Loaded = {
 export type LintResultMap = {
   [file: string]: LintResult;
 };
+export type RuleMetadata = {
+  [ruleName: string]: Partial<RuleMeta>;
+};
+export type Reported = LintResult & {
+  ruleMetadata?: RuleMetadata;
+};
 /**
  * Stylelint is loaded once per key and options, so a watch rebuild reuses the
  * worker pool the previous run started.
