@@ -126,7 +126,11 @@ describe("references", () => {
 
     require(typescriptPath)._reset();
 
-    const compiler = pack("references", { build: true, typescriptPath });
+    const compiler = pack("references", {
+      build: true,
+      threads: false,
+      typescriptPath,
+    });
     let fixing = true;
     let built = 0;
 

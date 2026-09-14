@@ -1,429 +1,102 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { statSync } from "node:fs";
 import { createRequire } from "node:module";
 
-import { importFrom, omitPluginOptions } from "../utils.js";
+import { countThreads, createSolo } from "../threads.js";
+import { importFrom } from "../utils.js";
+
+import { check, describe, getHeld, getSchemas } from "./typescript-program.js";
+
+export { getTypeScriptOptions } from "./typescript-program.js";
 
 /** @typedef {import("./index.js").CheckContext} CheckContext */
 /** @typedef {import("./index.js").CheckInstance} CheckInstance */
 /** @typedef {import("./index.js").Format} Format */
 /** @typedef {import("./index.js").FormatterOption} FormatterOption */
 /** @typedef {import("../options.js").CheckOptions} Options */
+/** @typedef {import("../threads.js").Solo} Solo */
 
 /** @typedef {EXPECTED_ANY} TypeScript */
 /** @typedef {EXPECTED_ANY} Diagnostic */
 /**
- * What one compilation leaves for the next: the files it parsed, the host that
- * hands them back, and the program that type checked them.
- * What a run of the check answers with: what it found, and what a watcher has
- * to follow for it to answer the same way again.
- * @typedef {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[], writes: string[] }} Found
- */
-
-/**
- * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY> }} Held
+ * What a worker answers with in place of a diagnostic it cannot hand over.
+ * @typedef {{ file?: string, code: string, severity: string, text: string, formatted: string }} Described
  */
 
 const nodeRequire = createRequire(import.meta.url);
 
-/** @type {WeakMap<EXPECTED_ANY, Map<string, Held>>} */
-const heldByCompiler = new WeakMap();
+/** @type {WeakMap<EXPECTED_ANY, Map<string, Solo>>} */
+const workersByCompiler = new WeakMap();
 
 /**
- * A program is kept for the compiler that built it, so that a rebuild type
- * checks what changed rather than the project over again.
+ * @param {EXPECTED_ANY} compiler the compiler the check ran for
+ * @param {string} id a key unique to the check within that compiler
+ */
+function dropWorker(compiler, id) {
+  const checks = workersByCompiler.get(compiler);
+
+  if (checks) checks.delete(id);
+}
+
+/**
+ * The one worker this check runs on, kept for the compiler it runs for so that
+ * the program it holds outlives the compilation that built it.
  * @param {EXPECTED_ANY} compiler the compiler the check runs for
  * @param {string} id a key unique to the check within that compiler
- * @returns {Held} what the last compilation left behind
+ * @param {Options} options the options the check was configured with
+ * @returns {Solo | null} the worker, or nothing when it cannot be handed over
  */
-function getHeld(compiler, id) {
-  let checks = heldByCompiler.get(compiler);
+function getWorker(compiler, id, options) {
+  let checks = workersByCompiler.get(compiler);
 
   if (!checks) {
     checks = new Map();
-    heldByCompiler.set(compiler, checks);
+    workersByCompiler.set(compiler, checks);
   }
 
-  let held = checks.get(id);
+  let worker = checks.get(id);
 
-  if (!held) {
-    held = {
-      signature: "",
-      files: new Map(),
-      seen: new Set(),
-      missing: new Set(),
-      host: undefined,
-      program: undefined,
-      programs: new Map(),
+  if (!worker) {
+    const started = createSolo(nodeRequire.resolve("./typescript-worker.js"), [
+      options,
+    ]);
+
+    if (!started) return null;
+
+    worker = started;
+    checks.set(id, worker);
+
+    // The program is the worker's, so in a watch it lives as long as the
+    // compiler does rather than as long as one of its builds. A watch that is
+    // closed without the compiler ends it too, or the thread outlives the work.
+    const stop = async () => {
+      dropWorker(compiler, id);
+
+      await /** @type {Solo} */ (worker).end();
     };
-    checks.set(id, held);
-  }
 
-  return held;
-}
-
-/**
- * @param {string} file the file to read the state of
- * @returns {string | undefined} what tells one write of it from the next
- */
-function versionOf(file) {
-  try {
-    const { mtimeMs, size } = statSync(file);
-
-    return `${mtimeMs}:${size}`;
-  } catch {
-    return undefined;
-  }
-}
-
-/** @type {WeakSet<EXPECTED_ANY>} */
-const keeping = new WeakSet();
-
-/**
- * A host answering with the source file it read last time for as long as the
- * file on disk is untouched, which is what a program has to be handed to reuse
- * the work of the one before it.
- * @param {EXPECTED_ANY} host the host to read through
- * @param {Map<string, EXPECTED_ANY>} files what was read, by path
- * @param {Set<string>} seen the paths this program asked for
- * @returns {EXPECTED_ANY} the same host
- */
-function keepSourceFiles(host, files, seen) {
-  if (keeping.has(host)) return host;
-
-  keeping.add(host);
-
-  const read = host.getSourceFile.bind(host);
-
-  host.getSourceFile = (
-    /** @type {string} */ fileName,
-    /** @type {EXPECTED_ANY} */ languageVersion,
-    /** @type {EXPECTED_ANY} */ onError,
-    /** @type {EXPECTED_ANY} */ shouldCreate,
-  ) => {
-    const version = versionOf(fileName);
-    const held = files.get(fileName);
-
-    seen.add(fileName);
-
-    if (held && version && held.version === version) return held.file;
-
-    const file = read(fileName, languageVersion, onError, shouldCreate);
-
-    if (file && version) {
-      // What the builder compares to decide which files it must check again.
-      file.version = version;
-      files.set(fileName, { version, file });
-    }
-
-    return file;
-  };
-
-  return host;
-}
-
-/**
- * @param {TypeScript} ts the loaded TypeScript
- * @param {EXPECTED_ANY} options the options the program is built with
- * @param {Map<string, EXPECTED_ANY>} files what was read, by path
- * @param {Set<string>} seen the paths this program asked for
- * @param {Set<string>} missing the paths it asked for and did not get
- * @returns {EXPECTED_ANY} the host
- */
-function createHost(ts, options, files, seen, missing) {
-  const host = ts.createCompilerHost(options);
-  const exists = host.fileExists.bind(host);
-
-  // Where an import that resolves to nothing is caught: the file the author
-  // goes on to write is one of the paths the resolver tried here.
-  host.fileExists = (/** @type {string} */ fileName) => {
-    const found = exists(fileName);
-
-    if (found) missing.delete(fileName);
-    else missing.add(fileName);
-
-    return found;
-  };
-
-  return keepSourceFiles(host, files, seen);
-}
-
-/** @type {{ plugin: EXPECTED_ANY, shared: EXPECTED_ANY, own: EXPECTED_ANY } | undefined} */
-let schemas;
-
-/**
- * Read on demand so that requiring the plugin does not read three files.
- * @returns {{ plugin: EXPECTED_ANY, shared: EXPECTED_ANY, own: EXPECTED_ANY }} the schemas
- */
-function getSchemas() {
-  if (!schemas) {
-    schemas = {
-      plugin: nodeRequire("../options.json"),
-      shared: nodeRequire("../shared-options.json"),
-      own: nodeRequire("./typescript.json"),
-    };
-  }
-
-  return schemas;
-}
-
-/**
- * @param {Options} options plugin options
- * @returns {EXPECTED_ANY} the options TypeScript itself understands
- */
-function getTypeScriptOptions(options) {
-  return omitPluginOptions(options, {
-    ...getSchemas().plugin.properties,
-    ...getSchemas().shared.properties,
-    ...getSchemas().own.properties,
-  });
-}
-
-/**
- * Every project a config file references, built the way `tsc -b` does — which
- * is what a reference is for: a project reads the declarations of the one it
- * references rather than its sources.
- * @param {TypeScript} ts the loaded TypeScript
- * @param {Options} options options
- * @param {string} configFile the config file describing the solution
- * @param {EXPECTED_ANY} host the host diagnostics are formatted against
- * @param {Diagnostic[]} unrecoverable what reading the config file itself failed with
- * @param {Held} held what the last compilation left behind
- * @returns {Found} what it found, and what it read to find it
- */
-function buildSolution(ts, options, configFile, host, unrecoverable, held) {
-  /** @type {Diagnostic[]} */
-  const diagnostics = [...unrecoverable];
-  const files = [configFile];
-  /** @type {string[]} */
-  const directories = [];
-  /** @type {string[]} */
-  const writes = [];
-
-  const overrides = {
-    ...getTypeScriptOptions(options),
-    ...options.compilerOptions,
-  };
-  const signature = `build\0${configFile}\0${JSON.stringify(overrides)}`;
-
-  // Nothing the last build was made of survives a change to how it is made.
-  if (held.signature !== signature) {
-    held.signature = signature;
-    held.files = new Map();
-    held.programs = new Map();
-  }
-
-  held.seen.clear();
-
-  const builderHost = ts.createSolutionBuilderHost(
-    ts.sys,
-    // The builder makes a program per project, and a rebuild makes them over
-    // again; each is handed the files and the program of the build before it.
-    (
-      /** @type {string[]} */ rootNames,
-      /** @type {EXPECTED_ANY} */ compilerOptions,
-      /** @type {EXPECTED_ANY} */ compilerHost,
-      /** @type {EXPECTED_ANY} */ oldProgram,
-      /** @type {Diagnostic[]} */ configFileParsingDiagnostics,
-      /** @type {EXPECTED_ANY} */ projectReferences,
-    ) => {
-      const project = (rootNames || []).join("\0");
-      const program = ts.createSemanticDiagnosticsBuilderProgram(
-        rootNames,
-        compilerOptions,
-        keepSourceFiles(compilerHost, held.files, held.seen),
-        held.programs.get(project) || oldProgram,
-        configFileParsingDiagnostics,
-        projectReferences,
-      );
-
-      held.programs.set(project, program);
-
-      return program;
-    },
-    (/** @type {Diagnostic} */ diagnostic) => diagnostics.push(diagnostic),
-    () => {},
-    () => {},
-  );
-  const builder = ts.createSolutionBuilder(builderHost, [configFile], {
-    ...overrides,
-    // The declarations are what the next project reads; the JavaScript is
-    // webpack's to write, and a later `tsc -b` still writes its own.
-    emitDeclarationOnly: true,
-  });
-  const order = builder.getBuildOrder();
-
-  // Read before the build, so that a project it stops short of is watched too.
-  for (const project of Array.isArray(order) ? order : order.buildOrder) {
-    const parsed = ts.getParsedCommandLineOfConfigFile(project, overrides, {
-      ...ts.sys,
-      getCurrentDirectory: () => String(options.context),
-      onUnRecoverableConfigFileDiagnostic: (
-        /** @type {Diagnostic} */ diagnostic,
-      ) => diagnostics.push(diagnostic),
+    compiler.hooks.shutdown.tapPromise("DiagnosticsPlugin", stop);
+    compiler.hooks.watchClose.tap("DiagnosticsPlugin", () => {
+      stop();
     });
-
-    if (!parsed) continue;
-
-    files.push(project, ...parsed.fileNames);
-    directories.push(...Object.keys(parsed.wildcardDirectories || {}));
-
-    for (const written of [
-      parsed.options.outDir,
-      parsed.options.declarationDir,
-      parsed.options.tsBuildInfoFile,
-    ]) {
-      if (written) writes.push(String(written));
-    }
   }
 
-  builder.build();
-
-  // A file no program asked for is one none of them holds.
-  for (const file of held.files.keys()) {
-    if (!held.seen.has(file)) held.files.delete(file);
-  }
-
-  return { diagnostics, host, files, directories, writes };
+  return worker;
 }
 
 /**
- * The program the config file describes, with emit off: webpack writes the
- * output, so a check that wrote any of its own would fight it.
- * @param {TypeScript} ts the loaded TypeScript
- * @param {Options} options options
- * @param {Held} held what the last compilation left behind
- * @returns {Found} what it found, and what it read to find it
+ * Whether a run of this check can be handed to a worker. A `Diagnostic` holds
+ * the source file it was found in, so a worker describes what it found rather
+ * than sending it; a formatter written in the configuration is handed the
+ * diagnostics themselves, which is a reason to run where they are.
+ * @param {Options} options the options the check was configured with
+ * @returns {boolean} whether the work can leave webpack's thread
  */
-function check(ts, options, held) {
-  const context = String(options.context);
-  const configFile =
-    options.configFile ||
-    ts.findConfigFile(context, ts.sys.fileExists, "tsconfig.json");
-
-  /** @type {Diagnostic[]} */
-  const unrecoverable = [];
-  const host = {
-    getCanonicalFileName: (/** @type {string} */ file) => file,
-    getCurrentDirectory: () => context,
-    getNewLine: () => ts.sys.newLine,
-  };
-
-  // Unreachable from the suite: every fixture sits under this repository's own
-  // config, which the search finds on its way up.
-  /* istanbul ignore next */
-  if (!configFile) {
-    throw new Error(
-      `no 'tsconfig.json' was found above '${context}', and none was named by 'configFile'.`,
-    );
-  }
-
-  // A solution is built rather than read: the projects it references have to
-  // publish their declarations before the ones reading them can be checked.
-  if (options.build) {
-    return buildSolution(ts, options, configFile, host, unrecoverable, held);
-  }
-
-  const overrides = {
-    ...getTypeScriptOptions(options),
-    ...options.compilerOptions,
-    // A check reports; webpack emits.
-    noEmit: true,
-  };
-
-  const parsed = ts.getParsedCommandLineOfConfigFile(configFile, overrides, {
-    ...ts.sys,
-    getCurrentDirectory: () => context,
-    onUnRecoverableConfigFileDiagnostic: (
-      /** @type {Diagnostic} */ diagnostic,
-    ) => unrecoverable.push(diagnostic),
-  });
-
-  if (!parsed) {
-    return {
-      diagnostics: unrecoverable,
-      host,
-      files: [configFile],
-      directories: [],
-      writes: [],
-    };
-  }
-
-  const signature = `program\0${configFile}\0${JSON.stringify(parsed.options)}`;
-
-  // Nothing the last program was built from survives a change to how it is
-  // built, so the whole of it is dropped rather than handed over.
-  if (held.signature !== signature) {
-    held.signature = signature;
-    held.files = new Map();
-    held.host = createHost(
-      ts,
-      parsed.options,
-      held.files,
-      held.seen,
-      held.missing,
-    );
-    held.program = undefined;
-    held.programs = new Map();
-  }
-
-  held.seen.clear();
-  held.program = ts.createSemanticDiagnosticsBuilderProgram(
-    parsed.fileNames,
-    parsed.options,
-    held.host,
-    held.program,
-    parsed.errors,
-    parsed.projectReferences,
+function canThread(options) {
+  return (
+    countThreads(options.threads) > 1 && typeof options.formatter !== "function"
   );
-
-  const program = held.program.getProgram();
-  const extended = parsed.options.configFile
-    ? parsed.options.configFile.extendedSourceFiles || []
-    : [];
-
-  // What the config file itself is wrong about is reported whatever else is
-  // turned off: nothing below it would be answering the right question.
-  const kinds = {
-    syntactic: true,
-    semantic: true,
-    declaration: true,
-    global: true,
-    ...options.diagnosticOptions,
-  };
-  const diagnostics = [
-    ...unrecoverable,
-    ...ts.sortAndDeduplicateDiagnostics([
-      ...program.getConfigFileParsingDiagnostics(),
-      ...program.getOptionsDiagnostics(),
-      ...(kinds.syntactic ? held.program.getSyntacticDiagnostics() : []),
-      ...(kinds.global ? program.getGlobalDiagnostics() : []),
-      ...(kinds.semantic ? held.program.getSemanticDiagnostics() : []),
-      ...(kinds.declaration &&
-      (parsed.options.declaration || parsed.options.composite)
-        ? program.getDeclarationDiagnostics()
-        : []),
-    ]),
-  ];
-
-  // A file this program never asked for is one it no longer holds.
-  for (const file of held.files.keys()) {
-    if (!held.seen.has(file)) held.files.delete(file);
-  }
-
-  return {
-    diagnostics,
-    host,
-    // The config file decides which files the program holds, so reading it
-    // again is what a change to it takes.
-    files: [configFile, ...extended, ...parsed.fileNames],
-    // What `include` covers, which is where a file the program has never held
-    // can appear.
-    directories: Object.keys(parsed.wildcardDirectories || {}),
-    writes: [],
-  };
 }
 
 /**
@@ -431,14 +104,21 @@ function check(ts, options, held) {
  * @returns {Promise<CheckInstance>} typescript check
  */
 async function create({ key, options, compilation }) {
-  const ts = await importFrom(options.typescriptPath || "typescript");
-  /** @type {TypeScript} */
-  const typescript = ts.default || ts;
+  const id = `${key}\0${options.configFile || ""}`;
+  const worker = canThread(options)
+    ? getWorker(compilation.compiler, id, options)
+    : null;
 
-  const held = getHeld(
-    compilation.compiler,
-    `${key}\0${options.configFile || ""}`,
-  );
+  /** @type {TypeScript} */
+  let typescript;
+
+  if (!worker) {
+    const loaded = await importFrom(options.typescriptPath || "typescript");
+
+    typescript = loaded.default || loaded;
+  }
+
+  const held = getHeld(compilation.compiler, id);
   /** @type {EXPECTED_ANY} */
   let host;
   /** @type {string[]} */
@@ -447,9 +127,18 @@ async function create({ key, options, compilation }) {
   let directories = [];
   /** @type {string[]} */
   let writes = [];
+  /** @type {string[]} */
+  let missing = [];
   // The program is the whole project, so it is built once however many batches
   // of files the plugin hands over.
   let checked = false;
+
+  /**
+   * @param {EXPECTED_ANY} one a diagnostic, or what a worker said of one
+   * @returns {EXPECTED_ANY} what it says
+   */
+  const saying = (one) =>
+    one.formatted === undefined ? describe(typescript, one) : one;
 
   return {
     async lintFiles() {
@@ -457,12 +146,24 @@ async function create({ key, options, compilation }) {
 
       checked = true;
 
+      if (worker) {
+        const found = await worker.lintFiles();
+
+        read = found.files;
+        directories = found.directories;
+        writes = found.writes;
+        missing = found.missing;
+
+        return found.diagnostics;
+      }
+
       const found = check(typescript, options, held);
 
       host = found.host;
       read = found.files;
       directories = found.directories;
       writes = found.writes;
+      missing = [...held.missing];
 
       return found.diagnostics;
     },
@@ -476,40 +177,23 @@ async function create({ key, options, compilation }) {
       return writes;
     },
     missingFiles() {
-      return [...held.missing];
+      return missing;
     },
     async getResults(results) {
       return results;
     },
     filterResults(results, keep) {
-      return /** @type {Diagnostic[]} */ (results).filter((diagnostic) =>
-        keep({
-          file: diagnostic.file ? diagnostic.file.fileName : undefined,
-          // As `tsc` prints it, which is how `ignoreDiagnostics` names one too.
-          code: `TS${diagnostic.code}`,
-          severity:
-            diagnostic.category === typescript.DiagnosticCategory.Error
-              ? "error"
-              : "warning",
-          text: typescript.flattenDiagnosticMessageText(
-            diagnostic.messageText,
-            " ",
-          ),
-        }),
-      );
+      return results.filter((one) => keep(saying(one)));
     },
     splitResults(results) {
-      /** @type {Diagnostic[]} */
+      /** @type {EXPECTED_ANY[]} */
       const errors = [];
-      /** @type {Diagnostic[]} */
+      /** @type {EXPECTED_ANY[]} */
       const warnings = [];
 
-      for (const diagnostic of /** @type {Diagnostic[]} */ (results)) {
-        if (diagnostic.category === typescript.DiagnosticCategory.Error) {
-          errors.push(diagnostic);
-        } else {
-          warnings.push(diagnostic);
-        }
+      for (const one of results) {
+        if (saying(one).severity === "error") errors.push(one);
+        else warnings.push(one);
       }
 
       return { errors, warnings };
@@ -517,6 +201,16 @@ async function create({ key, options, compilation }) {
     async getFormatter(formatter) {
       if (typeof formatter === "function") {
         return async (results) => String(await formatter(results));
+      }
+
+      // A worker formats each of them where the source files are, so what is
+      // left of a run after `ignoreDiagnostics` is printed by joining them.
+      if (worker) {
+        return async (results) =>
+          /** @type {Described[]} */ (results)
+            .map((one) => one.formatted)
+            .join("")
+            .trim();
       }
 
       return async (results) =>
@@ -527,11 +221,17 @@ async function create({ key, options, compilation }) {
           )
           .trim();
     },
-    async cleanup() {},
+    // A build that has no next one keeps no program, and a worker left running
+    // would hold the process open after webpack is done with it.
+    async cleanup() {
+      if (!worker || compilation.compiler.watchMode) return;
+
+      dropWorker(compilation.compiler, id);
+
+      await worker.end();
+    },
   };
 }
-
-export { getTypeScriptOptions };
 
 export default {
   name: "typescript",
