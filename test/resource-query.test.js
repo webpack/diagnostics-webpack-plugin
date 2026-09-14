@@ -35,6 +35,18 @@ describe("resource-query", () => {
   });
 
   it("should exclude the match resource query written as a string", async () => {
+    // A string is the source of the regexp, whether it is given on its own or
+    // among others.
+    assert.strictEqual(await reported("media"), 0);
     assert.strictEqual(await reported(["media"]), 0);
+    assert.strictEqual(await reported([/media/u, "nothing"]), 0);
+  });
+
+  it("should reject what is neither a regexp nor a string", async () => {
+    await assert.rejects(
+      () => reported([42]),
+      /resourceQueryExclude\[0\] should be one of these/u,
+      "a number is not read as the regexp it would become",
+    );
   });
 });

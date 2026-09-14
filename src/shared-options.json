@@ -189,7 +189,20 @@
           "instanceof": "RegExp"
         },
         {
-          "type": "array"
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "instanceof": "RegExp"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
         }
       ]
     },

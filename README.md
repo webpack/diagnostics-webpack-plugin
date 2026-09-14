@@ -362,12 +362,12 @@ to a worker.
 - Type:
 
 ```ts
-type resourceQueryExclude = RegExp | RegExp[];
+type resourceQueryExclude = RegExp | RegExp[] | string | string[];
 ```
 
 - Default: `[]`
 
-Specify the resource query to exclude. Only affects checks that read the module graph, such as ESLint.
+Specify the resource query to exclude. A string is read as the source of a regular expression, so `"raw"` and `/raw/` mean the same thing. Only affects checks that read the module graph, such as ESLint.
 
 #### `fix`
 
