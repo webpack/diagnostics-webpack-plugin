@@ -1,5 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -13,6 +20,12 @@ const fixture = join(import.meta.dirname, "fixtures", "references");
 const library = join(fixture, "lib");
 const application = join(fixture, "app");
 const broken = join(application, "src", "index.ts");
+const entryPath = join(fixture, "index.js");
+// What the fixture says before a test edits it, so that one ending early
+// leaves nothing behind.
+const pristine = new Map(
+  [broken, entryPath].map((file) => [file, readFileSync(file, "utf8")]),
+);
 
 const clean = () => {
   for (const project of [library, application]) {
@@ -29,6 +42,7 @@ describe("references", () => {
       watch.close();
       watch = undefined;
     }
+    for (const [file, content] of pristine) writeFileSync(file, content);
     clean();
   });
 
@@ -117,12 +131,52 @@ describe("references", () => {
     }
   });
 
-  it("should build each project of a rebuilt solution on the one before it", (t, done) => {
+  it("should report a change made while the last build was running", (_, done) => {
     const source = readFileSync(broken, "utf8");
+    const entry = readFileSync(entryPath, "utf8");
 
-    t.after(() => {
-      writeFileSync(broken, source);
+    // The solution starts clean, so the error the second build must report is
+    // one this test puts there.
+    writeFileSync(broken, source.replace(": string", ": number"));
+
+    const compiler = pack("references", { build: true });
+    let editing = true;
+
+    // Long enough that the edit and the file that triggers the rebuild are one
+    // change rather than a race between two.
+    watch = compiler.watch({ aggregateTimeout: 300 }, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (editing) {
+        assert.strictEqual(stats.hasErrors(), false);
+
+        editing = false;
+
+        // `tsc -b` reads how old an input is next to the outputs of the last
+        // build, and an edit made while that build was running is older than
+        // what it went on to write. This is that edit, stamped from inside it.
+        const during = new Date(
+          statSync(join(library, "tsconfig.tsbuildinfo")).mtimeMs - 200,
+        );
+
+        writeFileSync(broken, source);
+        utimesSync(broken, during, during);
+        // Something webpack is sure to notice, since the edit above was stamped
+        // into the past for the watcher as well.
+        writeFileSync(entryPath, `${entry}\n// rebuild\n`);
+
+        return;
+      }
+
+      if (!stats.hasErrors()) return;
+
+      assert.match(stats.compilation.errors[0].message, /TS2322/u);
+      done();
     });
+  });
+
+  it("should build each project of a rebuilt solution on the one before it", (_, done) => {
+    const source = readFileSync(broken, "utf8");
 
     require(typescriptPath)._reset();
 

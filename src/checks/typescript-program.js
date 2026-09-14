@@ -19,7 +19,7 @@ import { omitPluginOptions } from "../utils.js";
  */
 
 /**
- * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY> }} Held
+ * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY>, readAt: number }} Held
  */
 
 const nodeRequire = createRequire(import.meta.url);
@@ -53,6 +53,7 @@ function getHeld(compiler, id) {
       host: undefined,
       program: undefined,
       programs: new Map(),
+      readAt: 0,
     };
     checks.set(id, held);
   }
@@ -209,12 +210,40 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
     held.signature = signature;
     held.files = new Map();
     held.programs = new Map();
+    held.readAt = 0;
   }
 
   held.seen.clear();
 
+  /** @type {Set<string>} */
+  const inputs = new Set();
+  const readAt = Date.now();
+  // `tsc -b` asks whether a project is up to date by reading how old its inputs
+  // are next to the outputs of the last build. An edit made while that build
+  // was running is older than what it went on to write, so it would be read as
+  // up to date and reported as clean for as long as nothing else changed. What
+  // answers that is the moment the last build started reading, not the moment
+  // it finished writing.
+  const system = {
+    ...ts.sys,
+    getModifiedTime: (/** @type {string} */ file) => {
+      const modified = ts.sys.getModifiedTime(file);
+
+      if (
+        !held.readAt ||
+        !modified ||
+        !inputs.has(file) ||
+        modified.getTime() < held.readAt
+      ) {
+        return modified;
+      }
+
+      return new Date(readAt);
+    },
+  };
+
   const builderHost = ts.createSolutionBuilderHost(
-    ts.sys,
+    system,
     // The builder makes a program per project, and a rebuild makes them over
     // again; each is handed the files and the program of the build before it.
     (
@@ -266,6 +295,8 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
     files.push(project, ...parsed.fileNames);
     directories.push(...Object.keys(parsed.wildcardDirectories || {}));
 
+    for (const file of [project, ...parsed.fileNames]) inputs.add(file);
+
     for (const written of [
       parsed.options.outDir,
       parsed.options.declarationDir,
@@ -276,6 +307,8 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
   }
 
   builder.build();
+
+  held.readAt = readAt;
 
   // A file no program asked for is one none of them holds.
   for (const file of held.files.keys()) {
