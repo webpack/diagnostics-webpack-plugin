@@ -26,6 +26,7 @@ import typescript from "./typescript.js";
 /**
  * @typedef {object} CheckContext
  * @property {string} key a key unique to the compiler the check runs for
+ * @property {string} id a key unique to this entry among the checks the plugin runs
  * @property {CheckOptions} options resolved options for this check
  * @property {Compilation} compilation the compilation being linted
  */

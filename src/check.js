@@ -195,8 +195,8 @@ async function flatten(results) {
  * @param {Compilation} compilation compilation
  * @returns {Runner} the runner collecting and reporting the results
  */
-function createCheckRunner(key, { name, adapter, options }, compilation) {
-  const checkKey = `${key}:${name}`;
+function createCheckRunner(key, { id, name, adapter, options }, compilation) {
+  const checkKey = `${key}:${id}`;
   // A run of this check the last compilation left to finish on its own, which
   // is holding whatever the tool keeps between runs.
   const previous = takeDetachedReport(compilation, checkKey);
@@ -218,7 +218,7 @@ function createCheckRunner(key, { name, adapter, options }, compilation) {
 
   /** @type {Promise<CheckInstance | null>} */
   const pending = (previous || Promise.resolve())
-    .then(() => adapter.create({ key, options, compilation }))
+    .then(() => adapter.create({ key, id, options, compilation }))
     .catch((err) => {
       reportFailure(err);
       return null;

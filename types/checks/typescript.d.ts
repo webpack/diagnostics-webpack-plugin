@@ -36,6 +36,7 @@ export type Described = {
  */
 declare function create({
   key,
+  id: entry,
   options,
   compilation,
 }: CheckContext): Promise<CheckInstance>;

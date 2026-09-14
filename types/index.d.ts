@@ -11,6 +11,10 @@ export type CheckOptions = import("./options.js").CheckOptions;
 export type Options = import("./options.js").Options;
 export type ResolvedCheck = {
   /**
+   * what tells this entry from another of the same check
+   */
+  id: string;
+  /**
    * check name
    */
   name: string;
@@ -70,7 +74,7 @@ declare class DiagnosticsWebpackPlugin {
   resolveCheck(
     compiler: Compiler,
     context: string,
-    { name, adapter, options }: EnabledCheck,
+    { id, name, adapter, options }: EnabledCheck,
   ): ResolvedCheck;
   /**
    * @param {ResolvedCheck} check the check to create a runner for
@@ -78,7 +82,7 @@ declare class DiagnosticsWebpackPlugin {
    * @returns {Runner} runner
    */
   createRunner(
-    { name, adapter, options }: ResolvedCheck,
+    { id, name, adapter, options }: ResolvedCheck,
     compilation: Compilation,
   ): Runner;
   /**

@@ -45,7 +45,7 @@ export type ResultStore = Map<string, CheckResult | undefined>;
  */
 declare function createCheckRunner(
   key: string,
-  { name, adapter, options }: EnabledCheck,
+  { id, name, adapter, options }: EnabledCheck,
   compilation: Compilation,
 ): Runner;
 import DiagnosticError from "./DiagnosticError.js";

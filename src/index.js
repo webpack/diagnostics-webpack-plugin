@@ -27,6 +27,7 @@ import {
 
 /**
  * @typedef {object} ResolvedCheck
+ * @property {string} id what tells this entry from another of the same check
  * @property {string} name check name
  * @property {CheckAdapter} adapter the adapter running it
  * @property {CheckOptions} options options resolved for this check
@@ -242,7 +243,7 @@ class DiagnosticsWebpackPlugin {
    * @param {EnabledCheck} check the check to resolve the globs of
    * @returns {ResolvedCheck} the check with its globs resolved
    */
-  resolveCheck(compiler, context, { name, adapter, options }) {
+  resolveCheck(compiler, context, { id, name, adapter, options }) {
     const resourceQueries = arrify(options.resourceQueryExclude || []);
 
     /** @type {CheckOptions} */
@@ -269,6 +270,7 @@ class DiagnosticsWebpackPlugin {
     );
 
     return {
+      id,
       name,
       adapter,
       options: resolved,
@@ -316,18 +318,18 @@ class DiagnosticsWebpackPlugin {
      * Leaves a check to finish after the build it was run for and prints what
      * it found once it does, to the terminal rather than to the stats a build
      * that is over has already had printed.
-     * @param {string} name the name of the check
+     * @param {string} id what the check is remembered by
      * @param {Runner} runner the runner to leave running
      * @param {number} mine which compilation it was run for
      */
-    const reportLate = (name, runner, mine) => {
+    const reportLate = (id, runner, mine) => {
       const report = runner.report();
 
       runner.detach(report);
 
       report.then(
         ({ errors, warnings, read, missing, directories, writes }) => {
-          readLast.set(name, { read, missing, directories, writes });
+          readLast.set(id, { read, missing, directories, writes });
 
           if (generation !== mine) return;
 
@@ -364,7 +366,7 @@ class DiagnosticsWebpackPlugin {
           compiler.watchMode &&
           !compilation.compiler.isChild() &&
           isAdvisory(check.options) &&
-          readLast.has(check.name);
+          readLast.has(check.id);
         /** @type {string[]} */
         const pending = [];
         /** @type {string[]} */
@@ -527,18 +529,18 @@ class DiagnosticsWebpackPlugin {
           };
 
           for (const check of runners) {
-            const { name, options, runner } = check;
+            const { id, options, runner } = check;
 
             // What the build does not wait for is left for once it is over,
             // with the files the check read the last time it ran: what it
             // reads this time is not known until it is done, by which point
             // the watcher has been handed its list.
             if (check.late) {
-              watch(check, /** @type {Dependencies} */ (readLast.get(name)));
+              watch(check, /** @type {Dependencies} */ (readLast.get(id)));
 
               afterBuild.push(() => {
                 check.handOver();
-                reportLate(name, runner, mine);
+                reportLate(id, runner, mine);
               });
 
               continue;
@@ -555,7 +557,7 @@ class DiagnosticsWebpackPlugin {
               writes,
             } = report;
 
-            readLast.set(name, { read, missing, directories, writes });
+            readLast.set(id, { read, missing, directories, writes });
             watch(check, report);
 
             // `reportAs` has already dropped whatever it reports as `false`,
@@ -611,8 +613,12 @@ class DiagnosticsWebpackPlugin {
    * @param {Compilation} compilation compilation
    * @returns {Runner} runner
    */
-  createRunner({ name, adapter, options }, compilation) {
-    return createCheckRunner(this.key, { name, adapter, options }, compilation);
+  createRunner({ id, name, adapter, options }, compilation) {
+    return createCheckRunner(
+      this.key,
+      { id, name, adapter, options },
+      compilation,
+    );
   }
 
   /**
