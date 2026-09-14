@@ -17,6 +17,10 @@ const PLUGIN_NAME = "Diagnostics Webpack Plugin";
 /** @typedef {"errors" | "warnings"} Results */
 /** @typedef {number | boolean | "auto"} Threads */
 /** @typedef {Severity | { errors?: Severity, warnings?: Severity }} ReportAs */
+/** @typedef {{ file?: string, code?: string, severity?: "error" | "warning" }} IgnoreMatch */
+/** @typedef {{ file?: string, code?: string, severity: "error" | "warning", text: string }} Message */
+/** @typedef {number | string | IgnoreMatch} IgnoreOne */
+/** @typedef {IgnoreOne | IgnoreOne[] | ((message: Message) => boolean)} Ignore */
 /** @typedef {import("./checks/index.js").FormatterOption} FormatterOption */
 /** @typedef {import("./checks/index.js").CheckAdapter} CheckAdapter */
 /** @typedef {import("./checks/index.js").CheckAdapterInput} CheckAdapterInput */
@@ -31,6 +35,7 @@ const PLUGIN_NAME = "Diagnostics Webpack Plugin";
  * @typedef {object} SharedOptions
  * @property {boolean=} cache enable the tool's cache to decrease execution time
  * @property {string=} cacheLocation specify the path to the cache location
+ * @property {Ignore=} ignoreDiagnostics what a check finds that is not reported
  * @property {ReportAs=} reportAs what a check reports its results as
  * @property {Threads=} threads how many threads a check spreads its work over
  * @property {string | string[]=} exclude specify the files and/or directories to exclude

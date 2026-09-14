@@ -9,6 +9,19 @@ export type ReportAs =
       errors?: Severity;
       warnings?: Severity;
     };
+export type IgnoreMatch = {
+  file?: string;
+  code?: string;
+  severity?: "error" | "warning";
+};
+export type Message = {
+  file?: string;
+  code?: string;
+  severity: "error" | "warning";
+  text: string;
+};
+export type IgnoreOne = number | string | IgnoreMatch;
+export type Ignore = IgnoreOne | IgnoreOne[] | ((message: Message) => boolean);
 export type FormatterOption = import("./checks/index.js").FormatterOption;
 export type CheckAdapter = import("./checks/index.js").CheckAdapter;
 export type CheckAdapterInput = import("./checks/index.js").CheckAdapterInput;
@@ -31,6 +44,10 @@ export type SharedOptions = {
    * specify the path to the cache location
    */
   cacheLocation?: string | undefined;
+  /**
+   * what a check finds that is not reported
+   */
+  ignoreDiagnostics?: Ignore | undefined;
   /**
    * what a check reports its results as
    */

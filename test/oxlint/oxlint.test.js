@@ -44,6 +44,18 @@ describe("oxlint", () => {
     assert.match(message, /twice\.js:3:7/u);
   });
 
+  it("should leave out what ignoreDiagnostics names", async () => {
+    const stats = await pack("bad", {
+      ignoreDiagnostics: ["eslint(no-debugger)"],
+    }).runAsync();
+
+    assert.strictEqual(stats.hasErrors(), false);
+
+    const [{ message }] = stats.compilation.warnings;
+
+    assert.match(message, /no-unused-vars/u);
+  });
+
   it("should let reportAs send both to warnings", async () => {
     const stats = await pack("bad", { reportAs: "warning" }).runAsync();
 

@@ -1,6 +1,28 @@
 export type EXPECTED_ANY = any;
 export type CheckResult = import("./checks/index.js").CheckResult;
 /**
+ * Keeps what a predicate accepts of every file's diagnostics, dropping a file
+ * left with none of them.
+ * @template {{ severity: string, message: string }} T
+ * @param {{ filename: string, diagnostics: T[] }[]} files the results to filter
+ * @param {(message: import("./options.js").Message) => boolean} keep whether to keep one
+ * @param {(diagnostic: T) => string | undefined} codeOf the rule it came from
+ * @returns {CheckResult[]} what is left of them
+ */
+export function filterDiagnostics<
+  T extends {
+    severity: string;
+    message: string;
+  },
+>(
+  files: {
+    filename: string;
+    diagnostics: T[];
+  }[],
+  keep: (message: import("./options.js").Message) => boolean,
+  codeOf: (diagnostic: T) => string | undefined,
+): CheckResult[];
+/**
  * The entry of a tool that ships a binary behind one rather than a library, so
  * that it is run rather than called.
  * @param {string} specifier what names the package

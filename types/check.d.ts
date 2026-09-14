@@ -4,6 +4,10 @@ export type Compilation = import("webpack").Compilation;
 export type CheckResult = import("./checks/index.js").CheckResult;
 export type CheckInstance = import("./checks/index.js").CheckInstance;
 export type EnabledCheck = import("./options.js").EnabledCheck;
+export type Ignore = import("./options.js").Ignore;
+export type IgnoreMatch = import("./options.js").IgnoreMatch;
+export type IgnoreOne = import("./options.js").IgnoreOne;
+export type Message = import("./options.js").Message;
 export type OutputReportContent = {
   filePath: string;
   content: string;

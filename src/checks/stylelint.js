@@ -231,6 +231,25 @@ async function create({ key, options }) {
 
       return lastResults;
     },
+    filterResults(results, keep) {
+      /** @type {LintResult[]} */
+      const kept = [];
+
+      for (const file of /** @type {LintResult[]} */ (results)) {
+        const warnings = file.warnings.filter((message) =>
+          keep({
+            file: file.source,
+            code: message.rule,
+            severity: message.severity === "error" ? "error" : "warning",
+            text: message.text,
+          }),
+        );
+
+        if (warnings.length > 0) kept.push({ ...file, warnings });
+      }
+
+      return kept;
+    },
     splitResults(results) {
       /** @type {LintResult[]} */
       const errors = [];

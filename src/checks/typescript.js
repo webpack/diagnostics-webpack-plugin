@@ -227,17 +227,7 @@ function buildSolution(ts, options, configFile, host, unrecoverable) {
 
   builder.build();
 
-  const ignored = new Set(options.ignoreDiagnostics || []);
-
-  return {
-    diagnostics: diagnostics.filter(
-      (diagnostic) => !ignored.has(diagnostic.code),
-    ),
-    host,
-    files,
-    directories,
-    writes,
-  };
+  return { diagnostics, host, files, directories, writes };
 }
 
 /**
@@ -334,7 +324,6 @@ function check(ts, options, held) {
     ? parsed.options.configFile.extendedSourceFiles || []
     : [];
 
-  const ignored = new Set(options.ignoreDiagnostics || []);
   // What the config file itself is wrong about is reported whatever else is
   // turned off: nothing below it would be answering the right question.
   const kinds = {
@@ -357,7 +346,7 @@ function check(ts, options, held) {
         ? program.getDeclarationDiagnostics()
         : []),
     ]),
-  ].filter((diagnostic) => !ignored.has(diagnostic.code));
+  ];
 
   // A file this program never asked for is one it no longer holds.
   for (const file of held.files.keys()) {
@@ -431,6 +420,23 @@ async function create({ key, options, compilation }) {
     },
     async getResults(results) {
       return results;
+    },
+    filterResults(results, keep) {
+      return /** @type {Diagnostic[]} */ (results).filter((diagnostic) =>
+        keep({
+          file: diagnostic.file ? diagnostic.file.fileName : undefined,
+          // As `tsc` prints it, which is how `ignoreDiagnostics` names one too.
+          code: `TS${diagnostic.code}`,
+          severity:
+            diagnostic.category === typescript.DiagnosticCategory.Error
+              ? "error"
+              : "warning",
+          text: typescript.flattenDiagnosticMessageText(
+            diagnostic.messageText,
+            " ",
+          ),
+        }),
+      );
     },
     splitResults(results) {
       /** @type {Diagnostic[]} */

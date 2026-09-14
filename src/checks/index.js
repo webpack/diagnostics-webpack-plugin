@@ -10,6 +10,7 @@ import typescript from "./typescript.js";
 /** @typedef {import("webpack").Compilation} Compilation */
 /** @typedef {import("webpack").Compiler} Compiler */
 /** @typedef {import("../options.js").CheckOptions} CheckOptions */
+/** @typedef {import("../options.js").Message} Message */
 
 /**
  * A result produced by a check, only the adapter that created it knows its shape.
@@ -39,6 +40,7 @@ import typescript from "./typescript.js";
  * @property {(() => string[])=} readDirectories the directories the check takes its files from, so that a file appearing in one is picked up
  * @property {(() => string[])=} missingFiles the files the check looked for and did not find, so that creating one is picked up
  * @property {(() => string[])=} writesTo the paths the check itself writes, which are watched by nothing so that a build is not its own trigger
+ * @property {((results: CheckResult[], keep: (message: Message) => boolean) => CheckResult[])=} filterResults keeps what a predicate accepts of every result, which is what `ignore` is applied through
  * @property {(formatter?: FormatterOption) => Promise<Format>} getFormatter loads a formatter, falling back to the tool's default one
  * @property {() => Promise<void>} cleanup releases whatever the tool holds after a run
  */
