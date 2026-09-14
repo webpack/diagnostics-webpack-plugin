@@ -1,3 +1,6 @@
+// eslint-disable-next-line jsdoc/reject-any-type
+/** @typedef {any} EXPECTED_ANY */
+
 import { cpus } from "node:os";
 
 import { Worker as JestWorker } from "jest-worker";
@@ -7,6 +10,7 @@ import { Worker as JestWorker } from "jest-worker";
 /** @typedef {(files: string[]) => Promise<CheckResult[]>} LintTask */
 /** @typedef {JestWorker & { lintFiles: LintTask }} Worker */
 /** @typedef {{ lintFiles: LintTask, end: () => Promise<void> }} Pool */
+/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, end: () => Promise<void> }} Solo */
 
 /**
  * How many threads the user asked for, as a count. A check is spread over one
@@ -92,4 +96,40 @@ function createPool(source, size, setupArgs) {
   };
 }
 
-export { countThreads, createPool, isTransferable };
+/**
+ * One worker running a check's own worker entry, for a check whose work cannot
+ * be split over several — a type checker reads a whole program at once, so what
+ * a thread buys it is webpack's own thread back rather than a share of the work.
+ * @param {string} source the check's worker entry
+ * @param {unknown[]} setupArgs what the entry needs to load its tool
+ * @returns {Solo | null} the worker, or nothing when the setup cannot be handed over
+ */
+function createSolo(source, setupArgs) {
+  if (!isTransferable(setupArgs)) return null;
+
+  let worker = /** @type {Worker | null} */ (
+    new JestWorker(source, {
+      enableWorkerThreads: true,
+      numWorkers: 1,
+      setupArgs,
+    })
+  );
+
+  return {
+    lintFiles: async () => {
+      /* istanbul ignore next */
+      if (!worker) return undefined;
+
+      return /** @type {Worker} */ (worker).lintFiles([]);
+    },
+    end: async () => {
+      /* istanbul ignore else */
+      if (worker) {
+        await worker.end();
+        worker = null;
+      }
+    },
+  };
+}
+
+export { countThreads, createPool, createSolo, isTransferable };

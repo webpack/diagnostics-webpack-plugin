@@ -95,7 +95,9 @@ describe("watch", () => {
       'import { shared } from "./dependency.js";\n\nexport const doubled: number = shared * 2;\n',
     );
 
-    const compiler = pack("watch", { typescriptPath });
+    // The recorder watches the programs this process makes, so this one case
+    // is held to webpack's own thread.
+    const compiler = pack("watch", { threads: false, typescriptPath });
     let breaking = true;
 
     require(typescriptPath)._reset();
