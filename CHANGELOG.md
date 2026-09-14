@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.1
+
+### Patch Changes
+
+- End the build rather than hanging it where an `outputReport` has no file system to be written to. (by [@alexander-akait](https://github.com/alexander-akait) in [#362](https://github.com/webpack/diagnostics-webpack-plugin/pull/362))
+
+- `resourceQueryExclude` takes a string as well as a regexp, which the schema refused on its own and accepted unchecked inside a list. (by [@alexander-akait](https://github.com/alexander-akait) in [#360](https://github.com/webpack/diagnostics-webpack-plugin/pull/360))
+
 ## 1.0.0
 
 ### Major Changes
