@@ -59,7 +59,10 @@ function getSchemas() {
 
 // `files`, `formatter` and `fix` are meaningful to Stylelint itself, the rest
 // of the plugin schema is not.
-const KEPT_OPTIONS = ["cache", "cacheLocation", "files", "fix", "formatter"];
+// `formatter` is not among them: the plugin formats what is left of a run
+// after `ignoreDiagnostics`, so handing it to Stylelint as well only makes a
+// report nothing reads — and makes Stylelint the one to reject a bad name.
+const KEPT_OPTIONS = ["cache", "cacheLocation", "files", "fix"];
 
 /** @type {{ [key: string]: Loaded }} */
 const cache = {};
@@ -176,12 +179,10 @@ async function loadFormatter(stylelint, formatter) {
     return /** @type {Formatter} */ (formatter);
   }
 
-  if (typeof formatter === "string") {
-    try {
-      return await stylelint.formatters[formatter];
-    } catch {
-      // Load the default formatter.
-    }
+  // A name Stylelint has no formatter under reads as nothing rather than
+  // throwing, so the default is what answers for it.
+  if (typeof formatter === "string" && stylelint.formatters[formatter]) {
+    return stylelint.formatters[formatter];
   }
 
   return stylelint.formatters.string;
