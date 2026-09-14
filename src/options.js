@@ -3,8 +3,6 @@ import { createRequire } from "node:module";
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { validate } from "schema-utils";
-
 import adapters from "./checks/index.js";
 
 // JSON is read through CommonJS: import attributes are still ahead of the tooling
@@ -219,19 +217,7 @@ function getOptions(pluginOptions) {
  * @returns {void}
  */
 function validateOptions(compiler, pluginOptions, checks) {
-  // `compiler.validate` arrived with the hook, in webpack 5.106.
-  const check = compiler.validate
-    ? compiler.validate.bind(compiler)
-    : /** @type {typeof compiler.validate} */ (
-        (schemaToUse, value, options) =>
-          validate(
-            /** @type {EXPECTED_ANY} */ (
-              typeof schemaToUse === "function" ? schemaToUse() : schemaToUse
-            ),
-            /** @type {EXPECTED_ANY} */ (value),
-            options,
-          )
-      );
+  const check = compiler.validate.bind(compiler);
 
   check(() => getSchemas().schema, pluginOptions, {
     name: PLUGIN_NAME,

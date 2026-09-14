@@ -13,7 +13,7 @@
 
 # diagnostics-webpack-plugin
 
-> This plugin only supports webpack 5 and Node.js `>= 22.12.0`.
+> This plugin only supports webpack `>= 5.106.0` and Node.js `>= 22.12.0`.
 
 This plugin runs linters, type checkers and other diagnostic tools over your sources during the webpack build and reports what they find as webpack errors and warnings.
 
@@ -969,7 +969,7 @@ Both plugins become one, and every option they had is still here. What changed i
 
 **The build is no longer aborted from inside the plugin.** A result reported as a webpack error fails the build the way every other webpack error does — `stats.hasErrors()` is true and the CLI exits non-zero — and the assets are still written. Nothing about severity depends on `mode` any more.
 
-**Requirements.** Node `>= 22.12`, webpack 5, and ESLint 9 or 10 / Stylelint 17 for whichever checks you run.
+**Requirements.** Node `>= 22.12`, webpack `>= 5.106`, and ESLint 9 or 10 / Stylelint 17 for whichever checks you run.
 
 ### From `eslint-webpack-plugin`
 
