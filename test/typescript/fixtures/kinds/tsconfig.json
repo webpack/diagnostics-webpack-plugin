@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "target": "es2022",
+    "module": "preserve",
+    "skipLibCheck": true
+  },
+  "include": ["*.ts"]
+}
