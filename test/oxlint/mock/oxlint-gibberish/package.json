@@ -1,0 +1,7 @@
+{
+  "name": "oxlint-gibberish",
+  "version": "1.0.0",
+  "bin": {
+    "oxlint": "./bin/oxlint.js"
+  }
+}
