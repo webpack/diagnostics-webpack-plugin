@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import pack from "./utils/pack.js";
+
+const require = createRequire(import.meta.url);
+const typescriptPath = join(import.meta.dirname, "mock/typescript-recorder");
 
 const fixture = join(import.meta.dirname, "fixtures", "references");
 const library = join(fixture, "lib");
@@ -18,7 +22,15 @@ const clean = () => {
 };
 
 describe("references", () => {
-  afterEach(clean);
+  let watch;
+
+  afterEach(() => {
+    if (watch) {
+      watch.close();
+      watch = undefined;
+    }
+    clean();
+  });
 
   it("should report nothing of a solution it is not asked to build", async () => {
     // The config file lists no files of its own, so the program it describes
@@ -103,5 +115,50 @@ describe("references", () => {
     } finally {
       writeFileSync(broken, source);
     }
+  });
+
+  it("should build each project of a rebuilt solution on the one before it", (t, done) => {
+    const source = readFileSync(broken, "utf8");
+
+    t.after(() => {
+      writeFileSync(broken, source);
+    });
+
+    require(typescriptPath)._reset();
+
+    const compiler = pack("references", { build: true, typescriptPath });
+    let fixing = true;
+    let built = 0;
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (fixing) {
+        assert.strictEqual(stats.hasErrors(), true);
+
+        fixing = false;
+        built = require(typescriptPath)._handedBack.length;
+        writeFileSync(broken, source.replace(": string", ": number"));
+
+        return;
+      }
+
+      if (stats.hasErrors()) return;
+
+      const { _handedBack: handedBack } = require(typescriptPath);
+
+      // `tsc -b` reads an old program back from `.tsbuildinfo` either way, so
+      // what says the last one was kept is that it is the very same object.
+      assert.deepStrictEqual(
+        handedBack.slice(0, built),
+        handedBack.slice(0, built).map(() => false),
+        "the first solution built its projects from nothing",
+      );
+      assert.ok(
+        handedBack.slice(built).includes(true),
+        "a project of the second solution was handed the program of the first",
+      );
+      done();
+    });
   });
 });
