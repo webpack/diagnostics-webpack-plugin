@@ -180,11 +180,46 @@ function getESLintOptions(options) {
   return eslintOptions;
 }
 
+/** @type {WeakMap<EXPECTED_ANY, boolean>} */
+const acrossFilesByCompiler = new WeakMap();
+
+/**
+ * Whether the configuration reads other files to answer for one — typed
+ * linting, where a rule asks TypeScript about an import rather than reading
+ * only the file it was given.
+ * @param {EXPECTED_ANY} eslint the linter the configuration was resolved by
+ * @param {string} file a file the check covers
+ * @returns {Promise<boolean>} whether one file's result can depend on another
+ */
+async function readsAcrossFiles(eslint, file) {
+  let config;
+
+  try {
+    config = await eslint.calculateConfigForFile(file);
+  } catch {
+    // A file ESLint has no configuration for says nothing either way.
+    return false;
+  }
+
+  const parserOptions =
+    (config &&
+      config.languageOptions &&
+      config.languageOptions.parserOptions) ||
+    (config && config.parserOptions) ||
+    {};
+
+  return Boolean(
+    parserOptions.project ||
+    parserOptions.projectService ||
+    parserOptions.EXPERIMENTAL_useProjectService,
+  );
+}
+
 /**
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} eslint check
  */
-async function create({ options }) {
+async function create({ options, compilation }) {
   const eslintOptions = getESLintOptions(options);
   const fix = Boolean(eslintOptions.fix);
   const specifier = options.eslintPath || "eslint";
@@ -230,7 +265,31 @@ async function create({ options }) {
         : threads;
   }
 
-  const eslint = new ESLint(eslintOptions);
+  let eslint = new ESLint(eslintOptions);
+  const { compiler } = compilation;
+  /**
+   * Known once a file has been seen, which is from the first lint onwards.
+   * @type {boolean | undefined}
+   */
+  let across;
+
+  /**
+   * @param {string[]} files the files about to be linted
+   * @returns {Promise<void>} when the answer is known
+   */
+  const readConfig = async (files) => {
+    if (across !== undefined || files.length === 0) return;
+
+    across = await readsAcrossFiles(eslint, files[0]);
+    acrossFilesByCompiler.set(compiler, across);
+
+    // A cache keyed on one file's own contents cannot answer for a rule that
+    // read another, so what it holds would be reported long after it is wrong.
+    if (across && eslintOptions.cache) {
+      eslintOptions.cache = false;
+      eslint = new ESLint(eslintOptions);
+    }
+  };
 
   /** @type {import("../threads.js").Pool | null} */
   let pool = null;
@@ -260,6 +319,8 @@ async function create({ options }) {
 
   return {
     async lintFiles(files) {
+      await readConfig(files);
+
       const results = /** @type {LintResult[]} */ (
         spread(files)
           ? await /** @type {import("../threads.js").Pool} */ (pool).lintFiles(
@@ -370,6 +431,8 @@ export default {
   defaultExclude: () => "**/node_modules/**",
   resultPath: (/** @type {EXPECTED_ANY} */ result) =>
     /** @type {LintResult} */ (result).filePath,
+  readsAcrossFiles: (/** @type {EXPECTED_ANY} */ compiler) =>
+    acrossFilesByCompiler.get(compiler) === true,
   create,
   getESLintOptions,
 };
