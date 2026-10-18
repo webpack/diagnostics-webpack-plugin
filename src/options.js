@@ -3,7 +3,13 @@ import { createRequire } from "node:module";
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
+import biomeCheck from "./checks/biome.check.js";
+import eslintCheck from "./checks/eslint.check.js";
 import adapters from "./checks/index.js";
+import oxlintCheck from "./checks/oxlint.check.js";
+import stylelintCheck from "./checks/stylelint.check.js";
+import typescriptCheck from "./checks/typescript.check.js";
+import optionsCheck from "./options.check.js";
 
 // JSON is read through CommonJS: import attributes are still ahead of the tooling
 const nodeRequire = createRequire(import.meta.url);
@@ -217,6 +223,35 @@ function getOptions(pluginOptions) {
 }
 
 /**
+ * What an entry of `checks` takes: the options every check shares and the
+ * ones only its own adapter understands.
+ * @param {CheckAdapter} adapter the adapter the entry runs
+ * @returns {EXPECTED_ANY} the entry schema
+ */
+function getEntrySchema(adapter) {
+  const { entrySchema } = getSchemas();
+
+  return {
+    ...entrySchema,
+    properties: {
+      ...entrySchema.properties,
+      ...adapter.schema.properties,
+    },
+  };
+}
+
+// Generated from the schemas above by `npm run fix:schema`, so options that
+// are valid never load `schema-utils` or compile a schema.
+/** @type {Record<string, (value: EXPECTED_ANY) => boolean>} */
+const ENTRY_CHECKS = {
+  biome: biomeCheck,
+  eslint: eslintCheck,
+  oxlint: oxlintCheck,
+  stylelint: stylelintCheck,
+  typescript: typescriptCheck,
+};
+
+/**
  * Runs from `compiler.hooks.validate`, so webpack's own `validate: false`
  * turns it off the way it does for webpack's plugins.
  * @param {Compiler} compiler compiler
@@ -225,12 +260,17 @@ function getOptions(pluginOptions) {
  * @returns {void}
  */
 function validateOptions(compiler, pluginOptions, checks) {
-  const check = compiler.validate.bind(compiler);
+  const validate = compiler.validate.bind(compiler);
 
-  check(() => getSchemas().schema, pluginOptions, {
-    name: PLUGIN_NAME,
-    baseDataPath: "options",
-  });
+  validate(
+    () => getSchemas().schema,
+    pluginOptions,
+    {
+      name: PLUGIN_NAME,
+      baseDataPath: "options",
+    },
+    optionsCheck,
+  );
 
   for (const [index, entry] of (pluginOptions.checks || []).entries()) {
     // A check named rather than written out carries no options to check.
@@ -238,25 +278,24 @@ function validateOptions(compiler, pluginOptions, checks) {
 
     const { adapter } = checks[index];
 
-    check(
-      () => {
-        const { entrySchema } = getSchemas();
-
-        return {
-          ...entrySchema,
-          properties: {
-            ...entrySchema.properties,
-            ...adapter.schema.properties,
-          },
-        };
-      },
+    validate(
+      () => getEntrySchema(adapter),
       entry,
       {
         name: `${PLUGIN_NAME} (${adapter.label})`,
         baseDataPath: `options.checks[${index}]`,
       },
+      // A check adapter of its own brings a schema nothing precompiled
+      typeof entry.use === "string" ? ENTRY_CHECKS[adapter.name] : undefined,
     );
   }
 }
 
-export { getOptions, reportedAs, validateOptions };
+export {
+  ENTRY_CHECKS,
+  getEntrySchema,
+  getOptions,
+  getSchemas,
+  reportedAs,
+  validateOptions,
+};

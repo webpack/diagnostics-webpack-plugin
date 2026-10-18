@@ -41,6 +41,7 @@
     "lcov.info",
     "node_modules",
     "package-lock.json",
+    "src/**/*.check.js",
     "package.json"
   ]
 }
