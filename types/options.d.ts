@@ -148,28 +148,12 @@ export type NormalizedOptions = {
 /** @type {Record<string, (value: EXPECTED_ANY) => boolean>} */
 export const ENTRY_CHECKS: Record<string, (value: EXPECTED_ANY) => boolean>;
 /**
- * What an entry of `checks` takes: the options every check shares and the
- * ones only its own adapter understands.
- * @param {CheckAdapter} adapter the adapter the entry runs
- * @returns {EXPECTED_ANY} the entry schema
- */
-export function getEntrySchema(adapter: CheckAdapter): EXPECTED_ANY;
-/**
  * Splits the options shared by every check from the per-check entries and
  * merges each entry over them.
  * @param {Options} pluginOptions plugin options
  * @returns {NormalizedOptions} normalized plugin options
  */
 export function getOptions(pluginOptions: Options): NormalizedOptions;
-/**
- * Read on demand, because a build that validates nothing never needs them.
- * JSON is read through CommonJS: import attributes are still ahead of the tooling.
- * @returns {{ schema: EXPECTED_ANY, entrySchema: EXPECTED_ANY }} the plugin schemas
- */
-export function getSchemas(): {
-  schema: EXPECTED_ANY;
-  entrySchema: EXPECTED_ANY;
-};
 /**
  * A severity covers a check's errors and its warnings alike unless an object
  * sets them apart, and one it leaves out keeps its own.

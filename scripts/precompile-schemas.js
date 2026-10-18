@@ -4,9 +4,10 @@
 //   node scripts/precompile-schemas.js          # fail when a check is stale
 //   node scripts/precompile-schemas.js --write  # write the checks
 //
-// WHY: the schemas are composed in `src/options.js`, so `schema-utils
-// precompile` cannot read them from a file, and composing them here the same
-// way keeps a check accepting exactly what the schema accepts.
+// WHY: the schemas are composed in code, so `schema-utils precompile` cannot
+// read them from a file. They come from `src/schemas.js`, the same composition
+// `src/options.js` validates with, so a check accepts exactly what its schema
+// accepts.
 
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { precompile } from "schema-utils";
 
 import adapters from "../src/checks/index.js";
-import { getEntrySchema, getSchemas } from "../src/options.js";
+import { getEntrySchema, getSchemas } from "../src/schemas.js";
 
 const write = process.argv.includes("--write");
 

@@ -8,7 +8,8 @@ import { validate } from "schema-utils";
 
 import adapters from "../src/checks/index.js";
 import optionsCheck from "../src/options.check.js";
-import { ENTRY_CHECKS, getEntrySchema, getSchemas } from "../src/options.js";
+import { ENTRY_CHECKS } from "../src/options.js";
+import { getEntrySchema, getSchemas } from "../src/schemas.js";
 
 // A precompiled check that passes skips the schema, so the two must never
 // disagree on what is valid.
