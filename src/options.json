@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "additionalProperties": true,
+  "additionalProperties": false,
   "properties": {
     "context": {
       "description": "A string indicating the root of your files.",
@@ -13,11 +13,54 @@
     "checks": {
       "description": "The checks to run, each with the options only it understands.",
       "type": "array",
-      "minItems": 1
+      "minItems": 1,
+      "items": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "./entry-options.json"
+          }
+        ]
+      }
     },
-    "use": {
-      "description": "The check to run, either the name of a built-in one or a check adapter.",
-      "anyOf": [{ "type": "string" }, { "type": "object" }]
+    "cache": {
+      "$ref": "./shared-options.json#/properties/cache"
+    },
+    "cacheLocation": {
+      "$ref": "./shared-options.json#/properties/cacheLocation"
+    },
+    "exclude": {
+      "$ref": "./shared-options.json#/properties/exclude"
+    },
+    "extensions": {
+      "$ref": "./shared-options.json#/properties/extensions"
+    },
+    "files": {
+      "$ref": "./shared-options.json#/properties/files"
+    },
+    "fix": {
+      "$ref": "./shared-options.json#/properties/fix"
+    },
+    "formatter": {
+      "$ref": "./shared-options.json#/properties/formatter"
+    },
+    "ignoreDiagnostics": {
+      "$ref": "./shared-options.json#/properties/ignoreDiagnostics"
+    },
+    "outputReport": {
+      "$ref": "./shared-options.json#/properties/outputReport"
+    },
+    "reportAs": {
+      "$ref": "./shared-options.json#/properties/reportAs"
+    },
+    "resourceQueryExclude": {
+      "$ref": "./shared-options.json#/properties/resourceQueryExclude"
+    },
+    "threads": {
+      "$ref": "./shared-options.json#/properties/threads"
     }
-  }
+  },
+  "required": ["checks"]
 }

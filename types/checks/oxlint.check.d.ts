@@ -1,5 +1,5 @@
 export function validate(
-  r: any,
+  e: any,
   {
     instancePath: s,
     parentData: n,
@@ -12,7 +12,7 @@ export function validate(
 ): any;
 export default t;
 declare function t(
-  r: any,
+  e: any,
   {
     instancePath: s,
     parentData: n,

@@ -10,5 +10,10 @@
       "description": "Path to `eslint` instance that will be used for linting. If the `eslintPath` is a folder like a official eslint, or specify a `formatter` option. now you don't have to install `eslint`.",
       "type": "string"
     }
-  }
+  },
+  "allOf": [
+    {
+      "$ref": "../entry-options.json"
+    }
+  ]
 }

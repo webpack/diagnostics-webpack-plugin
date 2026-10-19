@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
@@ -8,7 +10,9 @@ import oxlintCheck from "./checks/oxlint.check.js";
 import stylelintCheck from "./checks/stylelint.check.js";
 import typescriptCheck from "./checks/typescript.check.js";
 import optionsCheck from "./options.check.js";
-import { getEntrySchema, getSchemas } from "./schemas.js";
+
+// JSON is read through CommonJS: import attributes are still ahead of the tooling
+const nodeRequire = createRequire(import.meta.url);
 
 const PLUGIN_NAME = "Diagnostics Webpack Plugin";
 
@@ -82,6 +86,66 @@ const PLUGIN_NAME = "Diagnostics Webpack Plugin";
  */
 
 const DEFAULT_FOLDER_TO_EXCLUDE = "**/node_modules/**";
+
+/** @type {{ schema: EXPECTED_ANY, entrySchema: EXPECTED_ANY } | undefined} */
+let schemas;
+
+/**
+ * Read on demand, because a build that validates nothing never needs them.
+ * JSON is read through CommonJS: import attributes are still ahead of the tooling.
+ * @returns {{ schema: EXPECTED_ANY, entrySchema: EXPECTED_ANY }} the plugin schemas
+ */
+function getSchemas() {
+  if (!schemas) {
+    const pluginSchema = nodeRequire("./options.json");
+    const sharedSchema = nodeRequire("./shared-options.json");
+    const { allOf, ...entryOwn } = nodeRequire("./entry-options.json");
+
+    // The same schemas as the JSON files, with the `$ref`s between them read in place:
+    // the full validation compiles a schema alone, and a check adapter of the user's own
+    // adds the options it understands here.
+    const entrySchema = {
+      ...entryOwn,
+      properties: { ...entryOwn.properties, ...sharedSchema.properties },
+    };
+
+    schemas = {
+      entrySchema,
+      schema: {
+        ...pluginSchema,
+        properties: {
+          ...pluginSchema.properties,
+          ...sharedSchema.properties,
+          checks: {
+            ...pluginSchema.properties.checks,
+            // A check is named, or written out with the options it takes.
+            items: { anyOf: [{ type: "string" }, entrySchema] },
+          },
+        },
+      },
+    };
+  }
+
+  return schemas;
+}
+
+/**
+ * What an entry of `checks` takes: the options every check shares and the
+ * ones only its own adapter understands.
+ * @param {CheckAdapter} adapter the adapter the entry runs
+ * @returns {EXPECTED_ANY} the entry schema
+ */
+function getEntrySchema(adapter) {
+  const { entrySchema } = getSchemas();
+
+  return {
+    ...entrySchema,
+    properties: {
+      ...entrySchema.properties,
+      ...adapter.schema.properties,
+    },
+  };
+}
 
 /** @type {Record<Results, Severity>} */
 const REPORT_AS_DEFAULTS = { errors: "error", warnings: "warning" };
@@ -175,7 +239,7 @@ function getOptions(pluginOptions) {
   return { context, lintOnStart, checks: enabled };
 }
 
-// Generated from the schemas in `./schemas.js` by `npm run fix:schema`, so options that
+// Generated from the JSON schemas by `npm run fix:schema`, so options that
 // are valid never load `schema-utils` or compile a schema.
 /** @type {Record<string, (value: EXPECTED_ANY) => boolean>} */
 const ENTRY_CHECKS = {
@@ -226,4 +290,11 @@ function validateOptions(compiler, pluginOptions, checks) {
   }
 }
 
-export { ENTRY_CHECKS, getOptions, reportedAs, validateOptions };
+export {
+  ENTRY_CHECKS,
+  getEntrySchema,
+  getOptions,
+  getSchemas,
+  reportedAs,
+  validateOptions,
+};

@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "use": {
+      "description": "The check to run, either the name of a built-in one or a check adapter.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "required": ["use"],
+  "allOf": [
+    {
+      "$ref": "./shared-options.json"
+    }
+  ]
+}

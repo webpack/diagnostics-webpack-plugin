@@ -1,23 +1,23 @@
 export function validate(
   r: any,
   {
-    instancePath: s,
-    parentData: n,
-    parentDataProperty: o,
-    rootData: i,
+    instancePath: n,
+    parentData: o,
+    parentDataProperty: i,
+    rootData: a,
   }?: {
     instancePath?: string | undefined;
     rootData?: any;
   },
 ): any;
-export default t;
-declare function t(
+export default s;
+declare function s(
   r: any,
   {
-    instancePath: s,
-    parentData: n,
-    parentDataProperty: o,
-    rootData: i,
+    instancePath: n,
+    parentData: o,
+    parentDataProperty: i,
+    rootData: a,
   }?: {
     instancePath?: string | undefined;
     rootData?: any;

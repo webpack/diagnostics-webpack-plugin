@@ -6,5 +6,10 @@
       "description": "Path to `stylelint` instance that will be used for linting.",
       "type": "string"
     }
-  }
+  },
+  "allOf": [
+    {
+      "$ref": "../entry-options.json"
+    }
+  ]
 }

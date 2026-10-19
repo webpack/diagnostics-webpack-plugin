@@ -1,5 +1,5 @@
 export function validate(
-  r: any,
+  e: any,
   {
     instancePath: s,
     parentData: n,
@@ -10,9 +10,9 @@ export function validate(
     rootData?: any;
   },
 ): any;
-export default t;
-declare function t(
-  r: any,
+export default r;
+declare function r(
+  e: any,
   {
     instancePath: s,
     parentData: n,
