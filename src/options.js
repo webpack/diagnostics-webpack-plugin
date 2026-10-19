@@ -259,9 +259,7 @@ const ENTRY_CHECKS = {
  * @returns {void}
  */
 function validateOptions(compiler, pluginOptions, checks) {
-  const validate = compiler.validate.bind(compiler);
-
-  validate(
+  compiler.validate(
     () => getSchemas().schema,
     pluginOptions,
     {
@@ -277,7 +275,7 @@ function validateOptions(compiler, pluginOptions, checks) {
 
     const { adapter } = checks[index];
 
-    validate(
+    compiler.validate(
       () => getEntrySchema(adapter),
       entry,
       {
