@@ -130,7 +130,11 @@ async function affectedFiles(compiler, check, files) {
       return await check.adapter.affectedFiles(compiler, files, changed);
     }
 
-    const graph = await getGraph(compiler, String(check.options.context));
+    const graph = await getGraph(
+      compiler,
+      String(check.options.context),
+      check.id,
+    );
 
     return graph && affectedFromGraph(graph, files, changed);
   } catch {

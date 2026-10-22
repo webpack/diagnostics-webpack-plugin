@@ -200,20 +200,22 @@ function affectedFiles(graph, files, changed) {
 }
 
 /**
- * The graph of every check of a compiler that resolves through the same
- * project, so that a file is read once however many checks read across it.
+ * The graphs a compiler keeps, one per check. A graph is changed by every
+ * question asked of it — what changed is dropped from it, and a changed config
+ * empties it — so two checks sharing one would each see the other's answer.
  * @type {WeakMap<EXPECTED_ANY, Map<string, Promise<Graph | undefined>>>}
  */
 const graphsByCompiler = new WeakMap();
 
 /**
- * The graph a compiler keeps for a project, read with the TypeScript that
- * project installs — the one its own tooling resolves imports with.
+ * The graph a compiler keeps for one check, read with the TypeScript the
+ * check's project installs — the one its own tooling resolves imports with.
  * @param {EXPECTED_ANY} compiler the compiler the graph lives as long as
  * @param {string} context where the project's TypeScript is looked up from
+ * @param {string} owner what tells the check from the compiler's others
  * @returns {Promise<Graph | undefined>} the graph, or nothing without a TypeScript to read it with
  */
-function getGraph(compiler, context) {
+function getGraph(compiler, context, owner) {
   let graphs = graphsByCompiler.get(compiler);
 
   if (!graphs) {
@@ -221,7 +223,8 @@ function getGraph(compiler, context) {
     graphsByCompiler.set(compiler, graphs);
   }
 
-  let graph = graphs.get(context);
+  const key = `${owner}\0${context}`;
+  let graph = graphs.get(key);
 
   if (!graph) {
     graph = (async () => {
@@ -240,7 +243,7 @@ function getGraph(compiler, context) {
       }
     })();
 
-    graphs.set(context, graph);
+    graphs.set(key, graph);
   }
 
   return graph;

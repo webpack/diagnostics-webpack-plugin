@@ -134,13 +134,51 @@ describe("import graph", () => {
 });
 
 describe("the graph a compiler keeps", () => {
-  it("should be read with the project's own TypeScript, once per project", async () => {
+  it("should be read with the project's own TypeScript, once per check", async () => {
     const compiler = {};
-    const first = getGraph(compiler, import.meta.dirname);
+    const first = getGraph(compiler, import.meta.dirname, "eslint");
 
-    assert.strictEqual(getGraph(compiler, import.meta.dirname), first);
+    assert.strictEqual(
+      getGraph(compiler, import.meta.dirname, "eslint"),
+      first,
+    );
     assert.ok(await first);
-    assert.notStrictEqual(getGraph({}, import.meta.dirname), first);
+    assert.notStrictEqual(getGraph({}, import.meta.dirname, "eslint"), first);
+  });
+
+  it("should not let one check's question change another's answer", async (t) => {
+    // Asking changes a graph: two checks of one project each keep their own,
+    // or the first to see a config change would empty it under the second.
+    const project = mkdtempSync(join(tmpdir(), "two-checks-"));
+
+    t.after(() => rmSync(project, { recursive: true, force: true }));
+    writeFileSync(join(project, "tsconfig.json"), "{}");
+    writeFileSync(join(project, "leaf.ts"), "export const leaf = 1;\n");
+    writeFileSync(
+      join(project, "top.ts"),
+      'import { leaf } from "./leaf";\nexport const top = leaf;\n',
+    );
+
+    const compiler = {};
+    const config = join(project, "tsconfig.json");
+    const sources = [join(project, "leaf.ts"), join(project, "top.ts")];
+    // Biome lints JSON, so the config file can be one of its own.
+    const both = { eslint: sources, biome: [...sources, config] };
+    const [eslint, biome] = await Promise.all([
+      getGraph(compiler, project, "eslint"),
+      getGraph(compiler, project, "biome"),
+    ]);
+
+    assert.notStrictEqual(eslint, biome);
+
+    // Both have read the project, so both know its config file.
+    affectedFiles(eslint, both.eslint, [join(project, "leaf.ts")]);
+    affectedFiles(biome, both.biome, [join(project, "leaf.ts")]);
+
+    // A config change reaches every file, for the second check to ask as much
+    // as for the first.
+    assert.strictEqual(affectedFiles(eslint, both.eslint, [config]), undefined);
+    assert.strictEqual(affectedFiles(biome, both.biome, [config]), undefined);
   });
 
   it("should be nothing for a project whose TypeScript cannot be loaded", async (t) => {
