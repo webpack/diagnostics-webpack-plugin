@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync, writeFileSync } from "node:fs";
+import { rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -84,6 +84,55 @@ describe("incremental", () => {
     function firstPass(err) {
       assert.strictEqual(err, null);
       assert.strictEqual(linted().length, 2);
+
+      require(eslintPath)._reset();
+      require(eslintPath)._readAcrossFiles(true);
+      next = secondPass;
+      writeFileSync(leaf, "const leaf = 2;\n");
+    }
+  });
+
+  it("should lint again only what a change reaches where a rule reads other files", (t, done) => {
+    const other = join(import.meta.dirname, "fixtures", "watch-other.js");
+
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(other, "const other = 1;\n");
+    writeFileSync(
+      entry,
+      "require('./watch-leaf');\nrequire('./watch-other');\nconst entry = 1;\n",
+    );
+
+    // Written well before the watch starts, or its first rebuild counts them as
+    // changed along with the edit.
+    const past = new Date(Date.now() - 60_000);
+
+    for (const file of [entry, leaf, other]) utimesSync(file, past, past);
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    // eslint-disable-next-line no-use-before-define
+    let next = firstPass;
+    const compiler = pack("watch", { eslintPath });
+
+    watch = compiler.watch({}, (err, stats) => next(err, stats));
+
+    function secondPass(err) {
+      rmSync(other, { force: true });
+      assert.strictEqual(err, null);
+
+      const files = linted();
+
+      // The leaf changed and the entry imports it; nothing that changed is
+      // imported by the other file, so what it said last time still holds.
+      assert.strictEqual(files.length, 2);
+      assert.ok(files.some((file) => /watch-entry\.js/u.test(file)));
+      assert.ok(files.some((file) => /watch-leaf\.js/u.test(file)));
+      done();
+    }
+
+    function firstPass(err) {
+      assert.strictEqual(err, null);
+      assert.strictEqual(linted().length, 3);
 
       require(eslintPath)._reset();
       require(eslintPath)._readAcrossFiles(true);

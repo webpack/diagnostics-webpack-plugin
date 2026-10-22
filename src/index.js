@@ -74,13 +74,47 @@ function walk(wanted, exclude) {
 }
 
 /**
+ * @param {Compiler} compiler compiler
+ * @returns {string[] | undefined} what webpack saw change or go since the last compilation, or nothing on the first
+ */
+function changedFiles(compiler) {
+  const { modifiedFiles, removedFiles } = compiler;
+
+  if (!modifiedFiles) return undefined;
+
+  return [...modifiedFiles, ...(removedFiles || [])];
+}
+
+/**
+ * Of the files a check that reads across files did not see change, the ones a
+ * change can still have changed what it says of — when its adapter can tell.
+ * @param {Compiler} compiler compiler
+ * @param {ResolvedCheck} check the check to answer for
+ * @param {string[]} files every file the check covers
+ * @returns {Promise<Set<string> | undefined>} the files to lint again, as posix paths, or nothing when every one has to be
+ */
+async function affectedFiles(compiler, check, files) {
+  const changed = changedFiles(compiler);
+
+  if (!changed || !check.adapter.affectedFiles) return undefined;
+
+  try {
+    return await check.adapter.affectedFiles(compiler, files, changed);
+  } catch {
+    // Not knowing is answered by linting every file, as before.
+    return undefined;
+  }
+}
+
+/**
  * Walks the file system for the files a check wants, and says which of them
  * webpack has just seen change.
  * @param {Compiler} compiler compiler
  * @param {ResolvedCheck} check the check to collect the files of
  * @returns {Promise<{ lint: string[], keep: string[] }>} the files to lint, and the ones to report from the last compilation
  */
-async function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
+async function collectFromFileSystem(compiler, check) {
+  const { adapter, wanted, exclude } = check;
   // Read before the walk, which is what the build goes on building through.
   const { modifiedFiles } = compiler;
   // The walk is what says which files there are: one webpack never built is
@@ -88,15 +122,27 @@ async function collectFromFileSystem(compiler, { adapter, wanted, exclude }) {
   const found = await walk(wanted, exclude);
 
   // A check that cannot say which file a result came from has nothing to report
-  // a file it was not given from, so it is given all of them every time. One
-  // that reads other files to answer for one is given all of them too: what it
-  // said of a file it did not look at again was true of the files as they were.
-  if (
-    !modifiedFiles ||
-    !adapter.resultPath ||
-    (adapter.readsAcrossFiles && adapter.readsAcrossFiles(compiler))
-  ) {
+  // a file it was not given from, so it is given all of them every time.
+  if (!modifiedFiles || !adapter.resultPath) {
     return { lint: found, keep: [] };
+  }
+
+  // One that reads other files to answer for one is given every file a change
+  // can reach: what it said of the others was true of the files as they were,
+  // and still is of the ones nothing changed is imported by.
+  if (adapter.readsAcrossFiles && adapter.readsAcrossFiles(compiler)) {
+    const affected = await affectedFiles(compiler, check, found);
+
+    if (!affected) return { lint: found, keep: [] };
+
+    /** @type {{ lint: string[], keep: string[] }} */
+    const split = { lint: [], keep: [] };
+
+    for (const file of found) {
+      split[affected.has(toPosixPath(file)) ? "lint" : "keep"].push(file);
+    }
+
+    return split;
   }
 
   const changed = new Set([...modifiedFiles].map((file) => toPosixPath(file)));
@@ -401,6 +447,10 @@ class DiagnosticsWebpackPlugin {
         const pending = [];
         /** @type {string[]} */
         const kept = [];
+        // What a check reading across files did not see change, held until
+        // the graph is done and the files a change can reach are known.
+        /** @type {string[]} */
+        const deferred = [];
         let scheduled = false;
 
         const handOver = () => {
@@ -435,6 +485,7 @@ class DiagnosticsWebpackPlugin {
           files: [],
           pending,
           kept,
+          deferred,
           flush,
           handOver,
           late,
@@ -473,14 +524,19 @@ class DiagnosticsWebpackPlugin {
             ).every((reg) => !reg.test(query));
 
             if (isFileNotListed && isFileWanted && isQueryNotExclude) {
-              const keepable =
-                rebuilt ||
-                !check.adapter.readsAcrossFiles ||
-                !check.adapter.readsAcrossFiles(compiler);
-
               files.push(file);
-              (rebuilt || !keepable ? check.pending : check.kept).push(file);
-              check.flush();
+
+              if (rebuilt) {
+                check.pending.push(file);
+                check.flush();
+              } else if (
+                check.adapter.readsAcrossFiles &&
+                check.adapter.readsAcrossFiles(compiler)
+              ) {
+                check.deferred.push(file);
+              } else {
+                check.kept.push(file);
+              }
             }
           }
         };
@@ -516,8 +572,27 @@ class DiagnosticsWebpackPlugin {
         );
       }
 
-      compilation.hooks.finishModules.tap(this.key, () => {
-        for (const check of fromModules) check.flush(true);
+      compilation.hooks.finishModules.tapPromise(this.key, async () => {
+        await Promise.all(
+          fromModules.map(async (check) => {
+            if (check.deferred.length > 0) {
+              const affected = await affectedFiles(
+                compiler,
+                check,
+                check.files,
+              );
+
+              for (const file of check.deferred.splice(0)) {
+                (!affected || affected.has(toPosixPath(file))
+                  ? check.pending
+                  : check.kept
+                ).push(file);
+              }
+            }
+
+            check.flush(true);
+          }),
+        );
       });
 
       // await and interpret results
