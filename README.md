@@ -811,6 +811,20 @@ Alongside the shared options you can pass any
 [compiler option](https://www.typescriptlang.org/tsconfig/) — they override what
 the config file sets, as `--strict` would on the command line.
 
+`skipLibCheck` is the one most worth knowing about. The check follows the config
+file, so unless it says otherwise every declaration file the program reads is
+type checked too — TypeScript's own `lib.*.d.ts` and every package's types.
+Over three hundred modules that was 2.3 s of a 3.2 s check; with
+`skipLibCheck: true` it was 0.55 s. `fork-ts-checker-webpack-plugin` turns it on
+whatever the config file says, which is most of why it looks faster on a first
+build:
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "typescript", skipLibCheck: true }],
+});
+```
+
 ### `typescriptPath`
 
 - Type:
@@ -1177,6 +1191,7 @@ line and column. Three things to expect while doing it:
 | `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                                                                                                     |
 | `typescript.mode`                   | [`mode`](#mode). The same four values, and the same meaning; the default under `build` is `write-dts` rather than `write-tsbuildinfo`, because a referenced project is read through the declarations it publishes.                                                       |
 | `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                                                                                                      |
+| `skipLibCheck: true`, forced        | Whatever the config file says. Write [`skipLibCheck: true`](#typescript) in the entry to skip type checking declaration files the way that plugin does.                                                                                                                  |
 | `typescript.diagnosticOptions`      | [`diagnosticOptions`](#diagnosticoptions), spelled the same way. Every kind is reported here unless you turn one off; there, only `semantic` is on to begin with.                                                                                                        |
 | `issue.include`, `issue.exclude`    | [`ignoreDiagnostics`](#ignorediagnostics), which takes the same match of a file, a code and a severity, or a function of your own. It says what to leave out, so an `include` is written as the `exclude` of everything else.                                            |
 | `formatter`                         | [`formatter`](#formatter). Unset, TypeScript's own formatter is used, with color and the source line.                                                                                                                                                                    |
