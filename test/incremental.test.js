@@ -116,6 +116,47 @@ describe("incremental", () => {
     });
   });
 
+  it("should lint in this thread where a rule reads other files", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._setVersion("10.0.0");
+    require(eslintPath)._readAcrossFiles(true);
+
+    const compiler = pack("watch", { eslintPath });
+
+    watch = compiler.watch({}, (err) => {
+      assert.strictEqual(err, null);
+
+      const built = require(eslintPath)._built;
+
+      // Every thread ESLint starts builds the TypeScript program again, and
+      // cold on every rebuild, so typed linting stays where it stays warm.
+      assert.strictEqual(built[0].concurrency, "auto");
+      assert.strictEqual(built.at(-1).concurrency, "off");
+      done();
+    });
+  });
+
+  it("should keep a concurrency written against ESLint where a rule reads other files", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._setVersion("10.0.0");
+    require(eslintPath)._readAcrossFiles(true);
+
+    const compiler = pack("watch", { concurrency: 2, eslintPath });
+
+    watch = compiler.watch({}, (err) => {
+      assert.strictEqual(err, null);
+
+      const built = require(eslintPath)._built;
+
+      assert.ok(built.every((one) => one.concurrency === 2));
+      done();
+    });
+  });
+
   it("should stop reporting a file that leaves the graph", (t, done) => {
     writeFileSync(leaf, "const leaf = 1;\n");
     writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");

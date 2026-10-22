@@ -37,9 +37,13 @@ module.exports = {
   _readAcrossFiles: (reads) => {
     parserOptions = reads ? { project: "./tsconfig.json" } : {};
   },
+  _setVersion: (version) => {
+    ESLintMock.version = version;
+  },
   _reset: () => {
     calls.length = 0;
     built.length = 0;
     parserOptions = {};
+    ESLintMock.version = "9";
   },
 };
