@@ -41,5 +41,10 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "$ref": "../entry-options.json"
+    }
+  ]
 }

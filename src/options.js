@@ -3,7 +3,13 @@ import { createRequire } from "node:module";
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
+import biomeCheck from "./checks/biome.check.js";
+import eslintCheck from "./checks/eslint.check.js";
 import adapters from "./checks/index.js";
+import oxlintCheck from "./checks/oxlint.check.js";
+import stylelintCheck from "./checks/stylelint.check.js";
+import typescriptCheck from "./checks/typescript.check.js";
+import optionsCheck from "./options.check.js";
 
 // JSON is read through CommonJS: import attributes are still ahead of the tooling
 const nodeRequire = createRequire(import.meta.url);
@@ -93,35 +99,52 @@ function getSchemas() {
   if (!schemas) {
     const pluginSchema = nodeRequire("./options.json");
     const sharedSchema = nodeRequire("./shared-options.json");
-    const { use: useProperty, ...pluginProperties } = pluginSchema.properties;
+    const { allOf, ...entryOwn } = nodeRequire("./entry-options.json");
 
+    // The same schemas as the JSON files, with the `$ref`s between them read in place:
+    // the full validation compiles a schema alone, and a check adapter of the user's own
+    // adds the options it understands here.
     const entrySchema = {
-      type: "object",
-      additionalProperties: true,
-      properties: { use: useProperty, ...sharedSchema.properties },
-      required: ["use"],
+      ...entryOwn,
+      properties: { ...entryOwn.properties, ...sharedSchema.properties },
     };
 
     schemas = {
       entrySchema,
       schema: {
-        type: "object",
-        additionalProperties: false,
+        ...pluginSchema,
         properties: {
-          ...pluginProperties,
+          ...pluginSchema.properties,
           ...sharedSchema.properties,
           checks: {
-            ...pluginProperties.checks,
+            ...pluginSchema.properties.checks,
             // A check is named, or written out with the options it takes.
             items: { anyOf: [{ type: "string" }, entrySchema] },
           },
         },
-        required: ["checks"],
       },
     };
   }
 
   return schemas;
+}
+
+/**
+ * What an entry of `checks` takes: the options every check shares and the
+ * ones only its own adapter understands.
+ * @param {CheckAdapter} adapter the adapter the entry runs
+ * @returns {EXPECTED_ANY} the entry schema
+ */
+function getEntrySchema(adapter) {
+  const { entrySchema } = getSchemas();
+
+  return {
+    ...entrySchema,
+    properties: {
+      ...entrySchema.properties,
+      ...adapter.schema.properties,
+    },
+  };
 }
 
 /** @type {Record<Results, Severity>} */
@@ -216,6 +239,17 @@ function getOptions(pluginOptions) {
   return { context, lintOnStart, checks: enabled };
 }
 
+// Generated from the JSON schemas by `npm run fix:schema`, so options that
+// are valid never load `schema-utils` or compile a schema.
+/** @type {Record<string, (value: EXPECTED_ANY) => boolean>} */
+const ENTRY_CHECKS = {
+  biome: biomeCheck,
+  eslint: eslintCheck,
+  oxlint: oxlintCheck,
+  stylelint: stylelintCheck,
+  typescript: typescriptCheck,
+};
+
 /**
  * Runs from `compiler.hooks.validate`, so webpack's own `validate: false`
  * turns it off the way it does for webpack's plugins.
@@ -225,12 +259,15 @@ function getOptions(pluginOptions) {
  * @returns {void}
  */
 function validateOptions(compiler, pluginOptions, checks) {
-  const check = compiler.validate.bind(compiler);
-
-  check(() => getSchemas().schema, pluginOptions, {
-    name: PLUGIN_NAME,
-    baseDataPath: "options",
-  });
+  compiler.validate(
+    () => getSchemas().schema,
+    pluginOptions,
+    {
+      name: PLUGIN_NAME,
+      baseDataPath: "options",
+    },
+    optionsCheck,
+  );
 
   for (const [index, entry] of (pluginOptions.checks || []).entries()) {
     // A check named rather than written out carries no options to check.
@@ -238,25 +275,24 @@ function validateOptions(compiler, pluginOptions, checks) {
 
     const { adapter } = checks[index];
 
-    check(
-      () => {
-        const { entrySchema } = getSchemas();
-
-        return {
-          ...entrySchema,
-          properties: {
-            ...entrySchema.properties,
-            ...adapter.schema.properties,
-          },
-        };
-      },
+    compiler.validate(
+      () => getEntrySchema(adapter),
       entry,
       {
         name: `${PLUGIN_NAME} (${adapter.label})`,
         baseDataPath: `options.checks[${index}]`,
       },
+      // A check adapter of its own brings a schema nothing precompiled
+      typeof entry.use === "string" ? ENTRY_CHECKS[adapter.name] : undefined,
     );
   }
 }
 
-export { getOptions, reportedAs, validateOptions };
+export {
+  ENTRY_CHECKS,
+  getEntrySchema,
+  getOptions,
+  getSchemas,
+  reportedAs,
+  validateOptions,
+};

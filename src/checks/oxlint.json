@@ -13,7 +13,14 @@
     "args": {
       "description": "Arguments passed to oxlint as they are, for the flags this check does not name.",
       "type": "array",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     }
-  }
+  },
+  "allOf": [
+    {
+      "$ref": "../entry-options.json"
+    }
+  ]
 }
