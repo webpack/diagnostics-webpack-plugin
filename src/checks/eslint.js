@@ -268,6 +268,12 @@ async function create({ options, compilation }) {
         : threads;
   }
 
+  // On unless written down, so that typed linting below can tell the cache it
+  // turns off from one the configuration asked for.
+  const cacheIsOurs = eslintOptions.cache === undefined;
+
+  if (cacheIsOurs) eslintOptions.cache = true;
+
   let eslint = new ESLint(eslintOptions);
   const { compiler } = compilation;
   /**
@@ -292,7 +298,9 @@ async function create({ options, compilation }) {
 
     // A cache keyed on one file's own contents cannot answer for a rule that
     // read another, so what it holds would be reported long after it is wrong.
-    if (eslintOptions.cache) {
+    // One asked for in the configuration is kept: that is a trade of results
+    // for speed the configuration made, as `eslint-webpack-plugin` makes it.
+    if (cacheIsOurs) {
       eslintOptions.cache = false;
       changed = true;
     }
@@ -440,8 +448,9 @@ export default {
   get schema() {
     return getSchemas().own;
   },
+  // `cache` is on unless written down, which `create` says rather than this,
+  // so that one written down can be told apart.
   defaults: {
-    cache: true,
     cacheLocation:
       "node_modules/.cache/diagnostics-webpack-plugin/.eslintcache",
     configType: "flat",

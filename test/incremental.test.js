@@ -98,22 +98,49 @@ describe("incremental", () => {
     require(eslintPath)._reset();
     require(eslintPath)._readAcrossFiles(true);
 
-    const compiler = pack("watch", { cache: true, eslintPath });
+    // Unset rather than off, which is what the test configuration writes.
+    const compiler = pack("watch", { cache: undefined, eslintPath });
 
     watch = compiler.watch({}, (err) => {
       assert.strictEqual(err, null);
 
       const built = require(eslintPath)._built;
 
-      const asked = built.findIndex((one) => one.cache === true);
-
       // A cache keyed on one file's own contents cannot answer for a rule that
       // read another, so the linter is made again without one.
-      assert.ok(asked >= 0, "a linter was built with the cache this asked for");
-      assert.ok(
-        built.slice(asked + 1).some((one) => one.cache === false),
-        "and another was built without it",
-      );
+      assert.strictEqual(built[0].cache, true, "the cache is on by default");
+      assert.strictEqual(built.at(-1).cache, false, "and off once typed");
+      done();
+    });
+  });
+
+  it("should keep a cache written down where a rule reads other files", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    const compiler = pack("watch", { cache: true, eslintPath });
+
+    watch = compiler.watch({}, (err) => {
+      assert.strictEqual(err, null);
+
+      // Asked for, so the trade of results for speed is the configuration's.
+      assert.ok(require(eslintPath)._built.every((one) => one.cache === true));
+      done();
+    });
+  });
+
+  it("should keep the cache on where no rule reads other files", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+
+    const compiler = pack("watch", { cache: undefined, eslintPath });
+
+    watch = compiler.watch({}, (err) => {
+      assert.strictEqual(err, null);
+      assert.ok(require(eslintPath)._built.every((one) => one.cache === true));
       done();
     });
   });
