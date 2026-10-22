@@ -62,8 +62,14 @@ describe("lintDependentsAfterBuild", () => {
     for (const file of [entry, leaf]) utimesSync(file, past, past);
   });
 
-  afterEach(() => {
-    if (watching) watching.close();
+  afterEach(async () => {
+    // Closed before the files go, so no watch of this test sees the next one.
+    if (watching) {
+      await new Promise((resolve) => {
+        watching.close(resolve);
+      });
+    }
+    watching = undefined;
     rmSync(entry, { force: true });
     rmSync(leaf, { force: true });
   });
