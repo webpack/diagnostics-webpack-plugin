@@ -1,7 +1,9 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { isAbsolute, join } from "node:path";
 
 import {
   filterDiagnostics,
@@ -66,6 +68,128 @@ function formatDiagnostic(filename, diagnostic) {
   const rule = diagnostic.code ? `  ${diagnostic.code}` : "";
 
   return `${filename}${at}  ${diagnostic.severity}  ${diagnostic.message}${rule}`;
+}
+
+// The flags that turn on rules reading other files: type-aware rules,
+// and the import plugin's cycles and resolution.
+const ACROSS_FILES_FLAGS = new Set([
+  "--type-aware",
+  "--type-check",
+  "--import-plugin",
+]);
+
+// What oxlint looks for when no `--config` names one.
+const CONFIG_FILES = [".oxlintrc.json", ".oxlintrc.jsonc"];
+
+/**
+ * @param {string} text a config file as written
+ * @returns {EXPECTED_ANY} what it says, comments and trailing commas allowed
+ */
+function parseJsonc(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Comments are taken out only outside strings, which keeps a glob like
+    // `src/**` whole.
+    const bare = text
+      .replaceAll(
+        /("(?:[^"\\]|\\.)*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//gu,
+        (match, string) => string || "",
+      )
+      .replaceAll(/,(\s*[}\]])/gu, "$1");
+
+    return JSON.parse(bare);
+  }
+}
+
+/**
+ * @param {EXPECTED_ANY} config a config, or one of its `overrides`
+ * @returns {boolean} whether it turns on the import plugin
+ */
+function importsPlugin(config) {
+  return Array.isArray(config.plugins) && config.plugins.includes("import");
+}
+
+/**
+ * The config file oxlint reads for this check: the one `configFile` or a
+ * `--config` among `args` names, or the one it finds in the context.
+ * @param {Options} options the options the check was configured with
+ * @returns {string | undefined} its path, or nothing when there is none
+ */
+function findConfig(options) {
+  const context = String(options.context);
+  const args = /** @type {string[]} */ (options.args || []);
+  let named = options.configFile ? String(options.configFile) : undefined;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const [flag, value] = args[i].split(/[=](.*)/su);
+
+    if (flag === "-c" || flag === "--config") named = value ?? args[i + 1];
+  }
+
+  if (named) return isAbsolute(named) ? named : join(context, named);
+
+  for (const name of CONFIG_FILES) {
+    const path = join(context, name);
+
+    try {
+      readFileSync(path);
+
+      return path;
+    } catch {
+      // Not this one.
+    }
+  }
+
+  return undefined;
+}
+
+/** @type {WeakMap<Options, boolean>} */
+const acrossByOptions = new WeakMap();
+
+/**
+ * Whether oxlint is set to read other files to answer for one: type-aware
+ * rules, or the import plugin, whose `no-cycle` reports a file for what the
+ * files it imports import. Whatever cannot be read — an `extends`, a config
+ * written in JavaScript — is taken to, since that only costs linting again
+ * what a change reaches.
+ * @param {EXPECTED_ANY} compiler the compiler the check runs for
+ * @param {Options} options the options the check was configured with
+ * @returns {boolean} whether one file's results can depend on another
+ */
+function readsAcrossFiles(compiler, options) {
+  const known = acrossByOptions.get(options);
+
+  if (known !== undefined) return known;
+
+  let across = /** @type {string[]} */ (options.args || []).some((arg) =>
+    ACROSS_FILES_FLAGS.has(arg.split("=")[0]),
+  );
+
+  if (!across) {
+    const path = findConfig(options);
+
+    if (path) {
+      try {
+        const config = parseJsonc(readFileSync(path, "utf8"));
+        const settings = config.options || {};
+
+        across =
+          Boolean(config.extends && config.extends.length > 0) ||
+          settings.typeAware === true ||
+          settings.typeCheck === true ||
+          importsPlugin(config) ||
+          (Array.isArray(config.overrides) &&
+            config.overrides.some(importsPlugin));
+      } catch {
+        across = true;
+      }
+    }
+  }
+
+  acrossByOptions.set(options, across);
+
+  return across;
 }
 
 /**
@@ -150,4 +274,7 @@ export default {
   create,
   resultPath: (/** @type {EXPECTED_ANY} */ result) =>
     /** @type {FileResult} */ (result).filename,
+  readsAcrossFiles,
 };
+
+export { parseJsonc, readsAcrossFiles };

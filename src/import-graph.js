@@ -1,9 +1,11 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { toPosixPath } from "../utils.js";
+import { toPosixPath } from "./utils.js";
 
 /** @typedef {EXPECTED_ANY} TypeScript */
 
@@ -197,4 +199,51 @@ function affectedFiles(graph, files, changed) {
   return new Set([...reached].filter((file) => covered.has(file)));
 }
 
-export { affectedFiles, createGraph };
+/**
+ * The graph of every check of a compiler that resolves through the same
+ * project, so that a file is read once however many checks read across it.
+ * @type {WeakMap<EXPECTED_ANY, Map<string, Promise<Graph | undefined>>>}
+ */
+const graphsByCompiler = new WeakMap();
+
+/**
+ * The graph a compiler keeps for a project, read with the TypeScript that
+ * project installs — the one its own tooling resolves imports with.
+ * @param {EXPECTED_ANY} compiler the compiler the graph lives as long as
+ * @param {string} context where the project's TypeScript is looked up from
+ * @returns {Promise<Graph | undefined>} the graph, or nothing without a TypeScript to read it with
+ */
+function getGraph(compiler, context) {
+  let graphs = graphsByCompiler.get(compiler);
+
+  if (!graphs) {
+    graphs = new Map();
+    graphsByCompiler.set(compiler, graphs);
+  }
+
+  let graph = graphs.get(context);
+
+  if (!graph) {
+    graph = (async () => {
+      try {
+        const loaded = await import(
+          pathToFileURL(
+            createRequire(join(context, "package.json")).resolve("typescript"),
+          ).href
+        );
+
+        return createGraph(loaded.default || loaded);
+      } catch {
+        // Without a TypeScript of the project's own there is nothing to say
+        // which file reads which, and every file is linted again instead.
+        return undefined;
+      }
+    })();
+
+    graphs.set(context, graph);
+  }
+
+  return graph;
+}
+
+export { affectedFiles, createGraph, getGraph };

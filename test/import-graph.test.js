@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { affectedFiles, createGraph } from "../src/checks/import-graph.js";
+import { affectedFiles, createGraph, getGraph } from "../src/import-graph.js";
 import { toPosixPath } from "../src/utils.js";
 
 const ts = createRequire(import.meta.url)("typescript");
@@ -130,5 +130,29 @@ describe("import graph", () => {
     );
 
     assert.strictEqual(affected(all, ["leaf.ts"]), undefined);
+  });
+});
+
+describe("the graph a compiler keeps", () => {
+  it("should be read with the project's own TypeScript, once per project", async () => {
+    const compiler = {};
+    const first = getGraph(compiler, import.meta.dirname);
+
+    assert.strictEqual(getGraph(compiler, import.meta.dirname), first);
+    assert.ok(await first);
+    assert.notStrictEqual(getGraph({}, import.meta.dirname), first);
+  });
+
+  it("should be nothing for a project whose TypeScript cannot be loaded", async (t) => {
+    // Its own `typescript` is found before any installed elsewhere.
+    const project = mkdtempSync(join(tmpdir(), "no-typescript-"));
+    const broken = join(project, "node_modules", "typescript");
+
+    t.after(() => rmSync(project, { recursive: true, force: true }));
+    mkdirSync(broken, { recursive: true });
+    writeFileSync(join(broken, "package.json"), '{ "main": "index.js" }');
+    writeFileSync(join(broken, "index.js"), 'throw new Error("broken");\n');
+
+    assert.strictEqual(await getGraph({}, project), undefined);
   });
 });
