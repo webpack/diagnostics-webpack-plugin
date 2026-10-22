@@ -9,6 +9,7 @@ import { countThreads, createPool } from "../threads.js";
 import { omitPluginOptions } from "../utils.js";
 
 import { loadESLintClass } from "./eslint-worker.js";
+import { affectedFiles, createGraph } from "./import-graph.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -186,6 +187,48 @@ function getESLintOptions(options) {
 const acrossFilesByCompiler = new WeakMap();
 
 /**
+ * Where typed linting resolves TypeScript from, which is the project ESLint
+ * lints rather than this package.
+ * @type {WeakMap<EXPECTED_ANY, string>}
+ */
+const cwdByCompiler = new WeakMap();
+
+/** @type {WeakMap<EXPECTED_ANY, Promise<import("./import-graph.js").Graph | undefined>>} */
+const graphsByCompiler = new WeakMap();
+
+/**
+ * @param {EXPECTED_ANY} compiler the compiler the check runs for
+ * @returns {Promise<import("./import-graph.js").Graph | undefined>} the graph, or nothing without a TypeScript to read it with
+ */
+function getGraph(compiler) {
+  let graph = graphsByCompiler.get(compiler);
+
+  if (!graph) {
+    const cwd = cwdByCompiler.get(compiler) || process.cwd();
+
+    graph = (async () => {
+      try {
+        const loaded = await import(
+          pathToFileURL(
+            createRequire(join(cwd, "package.json")).resolve("typescript"),
+          ).href
+        );
+
+        return createGraph(loaded.default || loaded);
+      } catch {
+        // Typed linting without a TypeScript of the project's own leaves
+        // nothing to say which file reads which.
+        return undefined;
+      }
+    })();
+
+    graphsByCompiler.set(compiler, graph);
+  }
+
+  return graph;
+}
+
+/**
  * Whether the configuration reads other files to answer for one — typed
  * linting, where a rule asks TypeScript about an import rather than reading
  * only the file it was given.
@@ -291,6 +334,7 @@ async function create({ options, compilation }) {
 
     across = await readsAcrossFiles(eslint, files[0]);
     acrossFilesByCompiler.set(compiler, across);
+    cwdByCompiler.set(compiler, eslintOptions.cwd || process.cwd());
 
     if (!across) return;
 
@@ -461,6 +505,19 @@ export default {
     /** @type {LintResult} */ (result).filePath,
   readsAcrossFiles: (/** @type {EXPECTED_ANY} */ compiler) =>
     acrossFilesByCompiler.get(compiler) === true,
+  /**
+   * @param {EXPECTED_ANY} compiler the compiler the check runs for
+   * @param {string[]} files every file the check covers
+   * @param {string[]} changed the files that changed or went
+   * @returns {Promise<Set<string> | undefined>} the files to lint again, or nothing when every one has to be
+   */
+  async affectedFiles(compiler, files, changed) {
+    if (acrossFilesByCompiler.get(compiler) !== true) return undefined;
+
+    const graph = await getGraph(compiler);
+
+    return graph && affectedFiles(graph, files, changed);
+  },
   create,
   getESLintOptions,
 };
