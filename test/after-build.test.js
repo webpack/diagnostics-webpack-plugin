@@ -3,7 +3,7 @@
 
 import assert from "node:assert/strict";
 import { rmSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, normalize } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
 import webpack from "webpack";
@@ -26,7 +26,8 @@ const adapter = {
   create: async () => ({
     lintFiles: async (/** @type {string[]} */ files) =>
       files
-        .filter((file) => file === entry)
+        // A glob hands over `/` where `join` writes `\` on Windows.
+        .filter((file) => normalize(file) === entry)
         .map((file) => ({ file, text: `found ${generation}` })),
     getResults: async (/** @type {unknown[]} */ results) => results,
     splitResults: (/** @type {unknown[]} */ results) => ({
