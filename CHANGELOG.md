@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.0.2
+
+### Patch Changes
+
+- Validate options with precompiled checks, so valid options no longer load `schema-utils` or compile the plugin's schemas on every start. (by [@alexander-akait](https://github.com/alexander-akait) in [#364](https://github.com/webpack/diagnostics-webpack-plugin/pull/364))
+
+- Lint a typed ESLint configuration on webpack's thread rather than over `threads`, where every worker built the TypeScript program again from cold on every rebuild. (by [@alexander-akait](https://github.com/alexander-akait) in [#366](https://github.com/webpack/diagnostics-webpack-plugin/pull/366))
+
 ## 1.0.1
 
 ### Patch Changes
