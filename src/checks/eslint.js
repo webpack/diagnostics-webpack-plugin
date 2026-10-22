@@ -256,7 +256,9 @@ async function create({ options, compilation }) {
     threadsItself(ESLint.version);
 
   // Whatever was written against ESLint itself is what ESLint is given.
-  if (own && eslintOptions.concurrency === undefined) {
+  const concurrencyIsOurs = own && eslintOptions.concurrency === undefined;
+
+  if (concurrencyIsOurs) {
     eslintOptions.concurrency =
       options.threads === undefined ||
       options.threads === true ||
@@ -284,12 +286,26 @@ async function create({ options, compilation }) {
     across = await readsAcrossFiles(eslint, files[0]);
     acrossFilesByCompiler.set(compiler, across);
 
+    if (!across) return;
+
+    let changed = false;
+
     // A cache keyed on one file's own contents cannot answer for a rule that
     // read another, so what it holds would be reported long after it is wrong.
-    if (across && eslintOptions.cache) {
+    if (eslintOptions.cache) {
       eslintOptions.cache = false;
-      eslint = new ESLint(eslintOptions);
+      changed = true;
     }
+
+    // Every thread ESLint starts builds the whole TypeScript program again,
+    // and starts cold on every rebuild because the threads end with the lint.
+    // In this thread the program is built once and kept warm between rebuilds.
+    if (concurrencyIsOurs) {
+      eslintOptions.concurrency = "off";
+      changed = true;
+    }
+
+    if (changed) eslint = new ESLint(eslintOptions);
   };
 
   /** @type {import("../threads.js").Pool | null} */
@@ -304,7 +320,9 @@ async function create({ options, compilation }) {
    * @returns {boolean} whether to spread them
    */
   const spread = (files) => {
-    if (own || threads <= 1 || files.length < POOL_WORTH_STARTING) return false;
+    if (own || across || threads <= 1 || files.length < POOL_WORTH_STARTING) {
+      return false;
+    }
 
     if (!pool) {
       pool = createPool(

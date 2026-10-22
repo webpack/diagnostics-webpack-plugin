@@ -566,7 +566,7 @@ Run with `{ use: "eslint" }`. It lints the files webpack builds, so only the mod
 
 Alongside the shared options you can pass any [ESLint Node.js API option](https://eslint.org/docs/latest/integrate/nodejs-api#-new-eslintoptions) — they are handed to the `ESLint` class as they are.
 
-[`threads`](#threads) reaches ESLint as its own `concurrency` from 9.34.0 under flat config, and an older ESLint or an `eslintrc` one is pooled instead. Write `concurrency` yourself and that is what ESLint is given, whatever `threads` says. Note that webpack spells this idea `parallelism`, and uses the word concurrency for something else again — bounded work on one thread.
+[`threads`](#threads) reaches ESLint as its own `concurrency` from 9.34.0 under flat config, and an older ESLint or an `eslintrc` one is pooled instead. Typed linting — a configuration with `parserOptions.project` or `projectService` — is the exception: every thread builds the whole TypeScript program again, and from cold on each rebuild, so it is linted on webpack's thread, where the program stays warm. Write `concurrency` yourself and that is what ESLint is given, whatever `threads` says. Note that webpack spells this idea `parallelism`, and uses the word concurrency for something else again — bounded work on one thread.
 
 A rebuild lints only the files webpack rebuilt and reports the rest from the previous run, so [`lintOnStart`](#lintonstart) is only worth setting to start a watch run quiet.
 
