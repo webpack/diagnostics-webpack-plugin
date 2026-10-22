@@ -254,7 +254,7 @@ type cache = boolean;
 
 The cache is enabled by default to decrease execution time.
 
-It is turned off for an ESLint check doing [typed linting](#eslint): a cache keyed on one file's own contents cannot answer for a rule that read another.
+An ESLint check doing [typed linting](#eslint) turns it off unless `cache: true` is written down: a cache keyed on one file's own contents cannot answer for a rule that read another, so a file whose import changed would be reported from before the change. Writing it down takes that trade for speed, as `eslint-webpack-plugin` does — a rebuild then answers every file but the changed ones from the cache, and whatever else an edit breaks goes unreported until those files change too.
 
 #### `cacheLocation`
 
