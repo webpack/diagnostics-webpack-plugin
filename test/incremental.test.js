@@ -4,6 +4,8 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
+import { countThreads } from "../src/threads.js";
+
 import pack from "./utils/pack.js";
 
 const require = createRequire(import.meta.url);
@@ -129,6 +131,13 @@ describe("incremental", () => {
       assert.strictEqual(err, null);
 
       const built = require(eslintPath)._built;
+
+      // A machine with no thread to spare never asks ESLint to thread at all.
+      if (countThreads("auto") <= 1) {
+        assert.ok(built.every((one) => one.concurrency === undefined));
+        done();
+        return;
+      }
 
       // Every thread ESLint starts builds the TypeScript program again, and
       // cold on every rebuild, so typed linting stays where it stays warm.
