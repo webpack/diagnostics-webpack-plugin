@@ -457,10 +457,15 @@ class DiagnosticsWebpackPlugin {
         const kept = [];
         // A rebuild of a check reading across files that is told to lint what
         // did not change once the build is over: those files, reported from
-        // their last run until then. Nothing when it lints them with the build.
+        // their last run until then. Nothing when it lints them with the build,
+        // which one writing an `outputReport` does: that file is written once,
+        // with every check sharing it, and what comes after would not reach it.
         const afterwards =
           !late &&
           check.options.lintDependentsAfterBuild &&
+          !(
+            check.options.outputReport && check.options.outputReport.filePath
+          ) &&
           compiler.watchMode &&
           !compilation.compiler.isChild() &&
           compiler.modifiedFiles

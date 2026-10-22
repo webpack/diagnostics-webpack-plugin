@@ -72,7 +72,7 @@ describe("lintDependentsAfterBuild", () => {
    * @param {object} check the entry of `checks`
    * @param {(log: string, stats: import("webpack").Stats) => boolean} until when the log says what the test waits for
    * @param {() => void} done done
-   * @param {() => void=} rebuilt what to do once the rebuild is over
+   * @param {(stats: import("webpack").Stats) => void=} rebuilt what to do once a rebuild is over
    */
   const run = (check, until, done, rebuilt = () => {}) => {
     /** @type {import("webpack").Stats | undefined} */
@@ -106,7 +106,7 @@ describe("lintDependentsAfterBuild", () => {
       stats = current;
 
       if (!first) {
-        rebuilt();
+        rebuilt(current);
 
         return;
       }
@@ -117,19 +117,44 @@ describe("lintDependentsAfterBuild", () => {
     });
   };
 
-  it("should print what changes once the rest is linted", (t, done) => {
+  it("should print what changes once the rest is linted, and carry it into the next build", (t, done) => {
+    let printed = false;
+
     run(
       {},
       (log, stats) => {
-        if (!/found 1/u.test(log)) return false;
+        if (printed || !/found 1/u.test(log)) return false;
 
+        printed = true;
         // The build itself reported the entry from its last run.
         assert.match(stats.compilation.errors[0].message, /found 0/u);
         assert.match(log, /what the last build reported has changed/u);
 
-        return true;
+        // The next build reports what was found after this one.
+        writeFileSync(leaf, "module.exports = 3;\n");
+
+        return false;
       },
       done,
+      (stats) => {
+        if (!printed) return;
+
+        assert.match(stats.compilation.errors[0].message, /found 1/u);
+        done();
+      },
+    );
+  });
+
+  it("should lint everything with the build for a check writing an output report", (t, done) => {
+    run(
+      { outputReport: { filePath: "after-report.txt" } },
+      () => false,
+      done,
+      (stats) => {
+        // Nothing waits for after the build: the entry is reported as found.
+        assert.match(stats.compilation.errors[0].message, /found 1/u);
+        done();
+      },
     );
   });
 

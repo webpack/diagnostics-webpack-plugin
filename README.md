@@ -384,8 +384,10 @@ new DiagnosticsPlugin({
 
 Over three hundred modules under typed linting, an edit's rebuild took 191 ms
 rather than 2.0 s, and an error it caused in a file importing the edited one was
-printed 2.4 s after the edit. A build that is not watched, and the first build of
-a watch, lint everything before they finish whatever this says.
+printed 2.4 s after the edit. A build that is not watched, the first build of a
+watch, and a check writing an [`outputReport`](#outputreport) lint everything
+before they finish whatever this says — that file is written with the build, and
+would otherwise hold what the build reported rather than what was found after.
 
 #### `resourceQueryExclude`
 
