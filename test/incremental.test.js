@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
-import { rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
@@ -139,6 +146,87 @@ describe("incremental", () => {
       next = secondPass;
       writeFileSync(leaf, "const leaf = 2;\n");
     }
+  });
+
+  describe("where a rule reads other files", () => {
+    const other = join(import.meta.dirname, "fixtures", "watch-other.js");
+
+    /**
+     * Writes an entry importing a leaf and another file, dated well before
+     * the watch starts so that its first rebuild sees only the edit.
+     */
+    const writeThree = () => {
+      writeFileSync(leaf, "const leaf = 1;\n");
+      writeFileSync(other, "const other = 1;\n");
+      writeFileSync(
+        entry,
+        "require('./watch-leaf');\nrequire('./watch-other');\nconst entry = 1;\n",
+      );
+
+      const past = new Date(Date.now() - 60_000);
+
+      for (const file of [entry, leaf, other]) utimesSync(file, past, past);
+
+      require(eslintPath)._reset();
+      require(eslintPath)._readAcrossFiles(true);
+    };
+
+    /**
+     * @param {object} options plugin options
+     * @param {(files: string[]) => void} check what to say of what the rebuild linted
+     * @param {() => void} done done
+     */
+    const rebuild = (options, check, done) => {
+      let first = true;
+
+      watch = pack("watch", { eslintPath, ...options }).watch({}, (err) => {
+        assert.strictEqual(err, null);
+
+        if (first) {
+          first = false;
+          require(eslintPath)._reset();
+          require(eslintPath)._readAcrossFiles(true);
+          writeFileSync(leaf, "const leaf = 2;\n");
+
+          return;
+        }
+
+        rmSync(other, { force: true });
+        check(linted());
+        done();
+      });
+    };
+
+    it("should lint again what a change reaches among the files it globs", (t, done) => {
+      writeThree();
+      rebuild(
+        { files: ["watch-entry.js", "watch-leaf.js", "watch-other.js"] },
+        (files) => {
+          assert.strictEqual(files.length, 2);
+          assert.ok(files.every((file) => !/watch-other\.js/u.test(file)));
+        },
+        done,
+      );
+    });
+
+    it("should lint every file again without a TypeScript to read imports with", (t, done) => {
+      // A project whose own `typescript` cannot be loaded, found before any
+      // installed elsewhere.
+      const project = mkdtempSync(join(tmpdir(), "no-typescript-"));
+      const broken = join(project, "node_modules", "typescript");
+
+      mkdirSync(broken, { recursive: true });
+      writeFileSync(join(broken, "package.json"), '{ "main": "index.js" }');
+      writeFileSync(join(broken, "index.js"), 'throw new Error("broken");\n');
+      t.after(() => rmSync(project, { recursive: true, force: true }));
+
+      writeThree();
+      rebuild(
+        { cwd: project },
+        (files) => assert.strictEqual(files.length, 3),
+        done,
+      );
+    });
   });
 
   it("should turn the tool's cache off where a rule reads other files", (t, done) => {

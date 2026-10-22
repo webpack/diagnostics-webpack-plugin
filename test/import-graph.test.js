@@ -75,6 +75,19 @@ describe("import graph", () => {
     ]);
   });
 
+  it("should follow a triple-slash reference", () => {
+    write(
+      "alone.ts",
+      '/// <reference path="./types.ts" />\nexport const a = 1;\n',
+    );
+
+    assert.deepStrictEqual(affected(all, ["types.ts"]), [
+      "alone.ts",
+      "typed.ts",
+      "types.ts",
+    ]);
+  });
+
   it("should read a changed file's imports again", () => {
     affected(all, ["alone.ts"]);
     write(
