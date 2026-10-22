@@ -149,7 +149,8 @@ describe("the graph a compiler keeps", () => {
   it("should not let one check's question change another's answer", async (t) => {
     // Asking changes a graph: two checks of one project each keep their own,
     // or the first to see a config change would empty it under the second.
-    const project = mkdtempSync(join(tmpdir(), "two-checks-"));
+    // Under the fixtures, so that its TypeScript is this package's.
+    const project = mkdtempSync(join(import.meta.dirname, "fixtures", "two-"));
 
     t.after(() => rmSync(project, { recursive: true, force: true }));
     writeFileSync(join(project, "tsconfig.json"), "{}");
