@@ -74,6 +74,39 @@ function walk(wanted, exclude) {
 }
 
 /**
+ * @param {Compiler} compiler compiler
+ * @returns {string[] | undefined} what webpack saw change or go since the last compilation, or nothing on the first
+ */
+function changedFiles(compiler) {
+  const { modifiedFiles, removedFiles } = compiler;
+
+  if (!modifiedFiles) return undefined;
+
+  return [...modifiedFiles, ...(removedFiles || [])];
+}
+
+/**
+ * Of the files a check that reads across files did not see change, the ones a
+ * change can still have changed what it says of — when its adapter can tell.
+ * @param {Compiler} compiler compiler
+ * @param {ResolvedCheck} check the check to answer for
+ * @param {string[]} files every file the check covers
+ * @returns {Promise<Set<string> | undefined>} the files to lint again, as posix paths, or nothing when every one has to be
+ */
+async function affectedFiles(compiler, check, files) {
+  const changed = changedFiles(compiler);
+
+  if (!changed || !check.adapter.affectedFiles) return undefined;
+
+  try {
+    return await check.adapter.affectedFiles(compiler, files, changed);
+  } catch {
+    // Not knowing is answered by linting every file, as before.
+    return undefined;
+  }
+}
+
+/**
  * Walks the file system for the files a check wants, and says which of them
  * webpack has just seen change.
  * @param {Compiler} compiler compiler
@@ -94,24 +127,57 @@ async function collectFromFileSystem(compiler, check) {
     return { lint: found, keep: [] };
   }
 
-  // One that reads other files to answer for one is given all of them too:
-  // what it said of a file it did not look at again was true of the files as
-  // they were. Unless it is told to look again once the build is over.
-  const across = Boolean(
-    adapter.readsAcrossFiles && adapter.readsAcrossFiles(compiler),
-  );
+  // One that reads other files to answer for one is given every file a change
+  // can reach: what it said of the others was true of the files as they were,
+  // and still is of the ones nothing changed is imported by.
+  if (adapter.readsAcrossFiles && adapter.readsAcrossFiles(compiler)) {
+    const affected = await affectedFiles(compiler, check, found);
 
-  if (across && !check.afterwards) return { lint: found, keep: [] };
+    if (!check.afterwards) {
+      if (!affected) return { lint: found, keep: [] };
+
+      /** @type {{ lint: string[], keep: string[] }} */
+      const split = { lint: [], keep: [] };
+
+      for (const file of found) {
+        split[affected.has(toPosixPath(file)) ? "lint" : "keep"].push(file);
+      }
+
+      return split;
+    }
+
+    // Told to look again once the build is over: what changed is linted with
+    // the build, and what else the change reaches is reported from its last
+    // run until it is linted after it.
+    const touched = new Set(
+      [...modifiedFiles].map((file) => toPosixPath(file)),
+    );
+    /** @type {{ lint: string[], keep: string[], after: string[] }} */
+    const split = { lint: [], keep: [], after: [] };
+
+    for (const file of found) {
+      const known = toPosixPath(file);
+
+      if (touched.has(known)) {
+        split.lint.push(file);
+        continue;
+      }
+
+      split.keep.push(file);
+
+      if (!affected || affected.has(known)) split.after.push(file);
+    }
+
+    return split;
+  }
 
   const changed = new Set([...modifiedFiles].map((file) => toPosixPath(file)));
-  /** @type {{ lint: string[], keep: string[], after?: string[] }} */
+  /** @type {{ lint: string[], keep: string[] }} */
   const collected = { lint: [], keep: [] };
 
   for (const file of found) {
     collected[changed.has(toPosixPath(file)) ? "lint" : "keep"].push(file);
   }
-
-  if (across) collected.after = collected.keep;
 
   return collected;
 }
@@ -455,8 +521,12 @@ class DiagnosticsWebpackPlugin {
         const pending = [];
         /** @type {string[]} */
         const kept = [];
+        // What a check reading across files did not see change, held until
+        // the graph is done and the files a change can reach are known.
+        /** @type {string[]} */
+        const deferred = [];
         // A rebuild of a check reading across files that is told to lint what
-        // did not change once the build is over: those files, reported from
+        // a change reaches once the build is over: those files, reported from
         // their last run until then. Nothing when it lints them with the build,
         // which one writing an `outputReport` does: that file is written once,
         // with every check sharing it, and what comes after would not reach it.
@@ -506,6 +576,7 @@ class DiagnosticsWebpackPlugin {
           files: [],
           pending,
           kept,
+          deferred,
           afterwards,
           flush,
           handOver,
@@ -545,23 +616,19 @@ class DiagnosticsWebpackPlugin {
             ).every((reg) => !reg.test(query));
 
             if (isFileNotListed && isFileWanted && isQueryNotExclude) {
-              const keepable =
-                rebuilt ||
-                !check.adapter.readsAcrossFiles ||
-                !check.adapter.readsAcrossFiles(compiler);
-
               files.push(file);
 
-              // Reported from its last run now, and linted again once the
-              // build is over.
-              if (!keepable && check.afterwards) {
-                check.kept.push(file);
-                check.afterwards.push(file);
+              if (rebuilt) {
+                check.pending.push(file);
+                check.flush();
+              } else if (
+                check.adapter.readsAcrossFiles &&
+                check.adapter.readsAcrossFiles(compiler)
+              ) {
+                check.deferred.push(file);
               } else {
-                (rebuilt || !keepable ? check.pending : check.kept).push(file);
+                check.kept.push(file);
               }
-
-              check.flush();
             }
           }
         };
@@ -601,8 +668,33 @@ class DiagnosticsWebpackPlugin {
         );
       }
 
-      compilation.hooks.finishModules.tap(this.key, () => {
-        for (const check of fromModules) check.flush(true);
+      compilation.hooks.finishModules.tapPromise(this.key, async () => {
+        await Promise.all(
+          fromModules.map(async (check) => {
+            if (check.deferred.length > 0) {
+              const affected = await affectedFiles(
+                compiler,
+                check,
+                check.files,
+              );
+
+              for (const file of check.deferred.splice(0)) {
+                if (affected && !affected.has(toPosixPath(file))) {
+                  check.kept.push(file);
+                } else if (check.afterwards) {
+                  // Reported from its last run now, and linted again once
+                  // the build is over.
+                  check.kept.push(file);
+                  check.afterwards.push(file);
+                } else {
+                  check.pending.push(file);
+                }
+              }
+            }
+
+            check.flush(true);
+          }),
+        );
       });
 
       // await and interpret results

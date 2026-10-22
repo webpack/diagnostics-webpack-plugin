@@ -255,7 +255,7 @@ type cache = boolean;
 
 The cache is enabled by default to decrease execution time.
 
-It is turned off for an ESLint check doing [typed linting](#eslint): a cache keyed on one file's own contents cannot answer for a rule that read another.
+An ESLint check doing [typed linting](#eslint) turns it off unless `cache: true` is written down: a cache keyed on one file's own contents cannot answer for a rule that read another, so a file whose import changed would be reported from before the change. Writing it down takes that trade for speed, as `eslint-webpack-plugin` does — a rebuild then answers every file but the changed ones from the cache, and whatever else an edit breaks goes unreported until those files change too.
 
 #### `cacheLocation`
 
@@ -369,9 +369,9 @@ type lintDependentsAfterBuild = boolean;
 - Default: `false`
 
 Whether a watch rebuild waits for the files it did not rebuild but has to lint
-again — under [typed linting](#eslint), the ones whose results can turn on a
-change elsewhere. Set, the build lints what it rebuilt and reports the rest from
-their last run, and those are linted again once the build is over. When that
+again — under [typed linting](#eslint), the ones importing a file that changed,
+however indirectly. Set, the build lints what it rebuilt and reports those from
+their last run, and they are linted again once the build is over. When that
 changes what the check reports, the new report is printed to the terminal, and
 the next build carries it — so a dev server overlays it from then on rather than
 at once. `fork-ts-checker-webpack-plugin`'s `async` makes the same trade.
@@ -602,7 +602,7 @@ Alongside the shared options you can pass any [ESLint Node.js API option](https:
 
 A rebuild lints only the files webpack rebuilt and reports the rest from the previous run, so [`lintOnStart`](#lintonstart) is only worth setting to start a watch run quiet.
 
-**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints every file the check covers, and ESLint's own [`cache`](#cache) is turned off for it, since that cache is keyed on each file's own contents and would answer for a type it never read.
+**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints the files that changed and every file importing one of them, however indirectly, and ESLint's own [`cache`](#cache) is turned off for it, since that cache is keyed on each file's own contents and would answer for a type it never read. Which file imports which is read with the project's own TypeScript, through the `tsconfig.json` nearest each file, so an `import type` counts though a bundler drops it before webpack sees it. A change that could reach files some other way — a declaration file nothing imports, a `declare global`, a config file, an import that resolves to nothing — lints every file again. Over three hundred modules, an edit near the bottom of the import tree took a rebuild from 2.0 s to 0.35 s, and one halfway up to 1.2 s.
 
 ### `configType`
 
@@ -842,6 +842,20 @@ compiler options given here, starts a new one.
 Alongside the shared options you can pass any
 [compiler option](https://www.typescriptlang.org/tsconfig/) — they override what
 the config file sets, as `--strict` would on the command line.
+
+`skipLibCheck` is the one most worth knowing about. The check follows the config
+file, so unless it says otherwise every declaration file the program reads is
+type checked too — TypeScript's own `lib.*.d.ts` and every package's types.
+Over three hundred modules that was 2.3 s of a 3.2 s check; with
+`skipLibCheck: true` it was 0.55 s. `fork-ts-checker-webpack-plugin` turns it on
+whatever the config file says, which is most of why it looks faster on a first
+build:
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "typescript", skipLibCheck: true }],
+});
+```
 
 ### `typescriptPath`
 
@@ -1209,6 +1223,7 @@ line and column. Three things to expect while doing it:
 | `typescript.typescriptPath`         | [`typescriptPath`](#typescriptpath).                                                                                                                                                                                                                                     |
 | `typescript.mode`                   | [`mode`](#mode). The same four values, and the same meaning; the default under `build` is `write-dts` rather than `write-tsbuildinfo`, because a referenced project is read through the declarations it publishes.                                                       |
 | `typescript.memoryLimit`, `profile` | Nothing to set — the check is not a forked process.                                                                                                                                                                                                                      |
+| `skipLibCheck: true`, forced        | Whatever the config file says. Write [`skipLibCheck: true`](#typescript) in the entry to skip type checking declaration files the way that plugin does.                                                                                                                  |
 | `typescript.diagnosticOptions`      | [`diagnosticOptions`](#diagnosticoptions), spelled the same way. Every kind is reported here unless you turn one off; there, only `semantic` is on to begin with.                                                                                                        |
 | `issue.include`, `issue.exclude`    | [`ignoreDiagnostics`](#ignorediagnostics), which takes the same match of a file, a code and a severity, or a function of your own. It says what to leave out, so an `include` is written as the `exclude` of everything else.                                            |
 | `formatter`                         | [`formatter`](#formatter). Unset, TypeScript's own formatter is used, with color and the source line.                                                                                                                                                                    |

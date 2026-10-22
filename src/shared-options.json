@@ -125,7 +125,7 @@
       ]
     },
     "lintDependentsAfterBuild": {
-      "description": "In watch mode, lint a rebuild's files whose results can turn on the ones that changed — every other file, under typed linting — after the build rather than during it. The build reports them from their last run, and what changes once they are linted again is printed when it does and carried by the next build.",
+      "description": "In watch mode, lint a rebuild's files whose results can turn on the ones that changed — under typed linting, the files importing them — after the build rather than during it. The build reports them from their last run, and what changes once they are linted again is printed when it does and carried by the next build.",
       "type": "boolean"
     },
     "outputReport": {
