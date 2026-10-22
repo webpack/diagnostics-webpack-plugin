@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync, writeFileSync } from "node:fs";
+import { rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -90,6 +90,68 @@ describe("incremental", () => {
       next = secondPass;
       writeFileSync(leaf, "const leaf = 2;\n");
     }
+  });
+
+  it("should lint what did not change after the build when told to", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    // Written well before the watch starts, or its first rebuild counts them as
+    // changed along with the edit.
+    const past = new Date(Date.now() - 60_000);
+
+    for (const file of [entry, leaf]) utimesSync(file, past, past);
+
+    // eslint-disable-next-line no-use-before-define
+    let next = firstPass;
+    const compiler = pack("watch", {
+      eslintPath,
+      lintDependentsAfterBuild: true,
+    });
+
+    watch = compiler.watch({}, (err, stats) => next(err, stats));
+
+    function secondPass(err) {
+      assert.strictEqual(err, null);
+
+      // The build waited only for what it rebuilt.
+      const during = linted();
+
+      assert.strictEqual(during.length, 1);
+      assert.match(during[0], /watch-leaf\.js/u);
+
+      // The rest is linted once it is over.
+      setTimeout(() => {
+        assert.ok(linted().some((file) => /watch-entry\.js/u.test(file)));
+        done();
+      }, 500);
+    }
+
+    function firstPass(err) {
+      assert.strictEqual(err, null);
+      assert.strictEqual(linted().length, 2);
+
+      require(eslintPath)._reset();
+      require(eslintPath)._readAcrossFiles(true);
+      next = secondPass;
+      writeFileSync(leaf, "const leaf = 2;\n");
+    }
+  });
+
+  it("should lint everything with a build that is not watched, even when told to wait", async () => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    await pack("watch", {
+      eslintPath,
+      lintDependentsAfterBuild: true,
+    }).runAsync();
+
+    assert.strictEqual(linted().length, 2);
   });
 
   it("should turn the tool's cache off where a rule reads other files", (t, done) => {

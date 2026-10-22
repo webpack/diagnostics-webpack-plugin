@@ -124,6 +124,10 @@
         }
       ]
     },
+    "lintDependentsAfterBuild": {
+      "description": "In watch mode, lint a rebuild's files whose results can turn on the ones that changed — every other file, under typed linting — after the build rather than during it. The build reports them from their last run, and what changes once they are linted again is printed when it does and carried by the next build.",
+      "type": "boolean"
+    },
     "outputReport": {
       "description": "Write the output of the errors to a file, for example a checkstyle xml file for use for reporting on Jenkins CI.",
       "anyOf": [

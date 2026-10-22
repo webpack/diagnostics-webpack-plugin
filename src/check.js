@@ -42,6 +42,7 @@ const NOT_SHARED = new Set([
   "exclude",
   "ignoreDiagnostics",
   "extensions",
+  "lintDependentsAfterBuild",
   "files",
   "formatter",
   "outputReport",

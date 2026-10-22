@@ -40,6 +40,7 @@ const PLUGIN_NAME = "Diagnostics Webpack Plugin";
  * @property {boolean=} cache enable the tool's cache to decrease execution time
  * @property {string=} cacheLocation specify the path to the cache location
  * @property {Ignore=} ignoreDiagnostics what a check finds that is not reported
+ * @property {boolean=} lintDependentsAfterBuild whether a watch rebuild lints the files that can turn on a change after the build rather than during it
  * @property {ReportAs=} reportAs what a check reports its results as
  * @property {Threads=} threads how many threads a check spreads its work over
  * @property {string | string[]=} exclude specify the files and/or directories to exclude
