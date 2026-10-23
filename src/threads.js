@@ -10,7 +10,11 @@ import { Worker as JestWorker } from "jest-worker";
 /** @typedef {(files: string[]) => Promise<CheckResult[]>} LintTask */
 /** @typedef {JestWorker & { lintFiles: LintTask }} Worker */
 /** @typedef {{ lintFiles: LintTask, end: () => Promise<void> }} Pool */
-/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, cancel: () => void, end: () => Promise<void> }} Solo */
+/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, cancel: (answer: Promise<EXPECTED_ANY>) => void, end: () => Promise<void> }} Solo */
+
+// More runs than these are never queued on one worker at once: each compiler
+// sharing it waits for its own last run before it starts the next.
+const STOP_SLOTS = 64;
 
 /**
  * How many threads the user asked for, as a count. A check is spread over one
@@ -108,9 +112,12 @@ function createSolo(source, setupArgs) {
   if (!isTransferable(setupArgs)) return null;
 
   // Shared with the worker rather than sent to it: a message would wait behind
-  // the run it is meant to stop. It holds the last run nobody waits for any
-  // more, and each run is numbered so that it knows whether it is one of them.
-  const stopped = new Int32Array(new SharedArrayBuffer(4));
+  // the run it is meant to stop. Each run is numbered, and one nobody waits for
+  // any more finds its number in the slot its number falls in. A worker can be
+  // shared by checks of several compilers, so stopping one run leaves the rest.
+  const stopped = new Int32Array(new SharedArrayBuffer(4 * STOP_SLOTS));
+  /** @type {WeakMap<Promise<EXPECTED_ANY>, number>} */
+  const runs = new WeakMap();
   let issued = 0;
 
   let worker = /** @type {Worker | null} */ (
@@ -122,17 +129,24 @@ function createSolo(source, setupArgs) {
   );
 
   return {
-    lintFiles: async () => {
+    // Not async: the promise handed back is the one `cancel` is given.
+    lintFiles: () => {
       /* istanbul ignore next */
-      if (!worker) return undefined;
+      if (!worker) return Promise.resolve(undefined);
 
       issued += 1;
 
-      return /** @type {EXPECTED_ANY} */ (worker).lintFiles([], issued);
+      const answer = /** @type {EXPECTED_ANY} */ (worker).lintFiles([], issued);
+
+      runs.set(answer, issued);
+
+      return answer;
     },
-    // Every run asked for so far, whether it has started or is still queued.
-    cancel: () => {
-      Atomics.store(stopped, 0, issued);
+    // Whether the run has started or is still queued.
+    cancel: (answer) => {
+      const run = runs.get(answer);
+
+      if (run !== undefined) Atomics.store(stopped, run % STOP_SLOTS, run);
     },
     end: async () => {
       /* istanbul ignore else */

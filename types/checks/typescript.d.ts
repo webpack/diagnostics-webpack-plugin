@@ -31,6 +31,13 @@ export type Described = {
   formatted: string;
 };
 /**
+ * A worker and the compilers whose checks run on it.
+ */
+export type Shared = {
+  worker: Solo;
+  users: Set<EXPECTED_ANY>;
+};
+/**
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} typescript check
  */

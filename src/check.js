@@ -519,4 +519,6 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
   return { detach, keep, lint, report };
 }
 
+export { sharingKey };
+
 export default createCheckRunner;

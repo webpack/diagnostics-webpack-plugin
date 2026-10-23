@@ -1,3 +1,4 @@
+export type EXPECTED_ANY = any;
 export type CheckOptions = import("./options.js").CheckOptions;
 export type CheckResult = import("./checks/index.js").CheckResult;
 export type LintTask = (files: string[]) => Promise<CheckResult[]>;
@@ -10,16 +11,9 @@ export type Pool = {
 };
 export type Solo = {
   lintFiles: () => Promise<EXPECTED_ANY>;
-  cancel: () => void;
+  cancel: (answer: Promise<EXPECTED_ANY>) => void;
   end: () => Promise<void>;
 };
-export type EXPECTED_ANY = any;
-/** @typedef {import("./options.js").CheckOptions} CheckOptions */
-/** @typedef {import("./checks/index.js").CheckResult} CheckResult */
-/** @typedef {(files: string[]) => Promise<CheckResult[]>} LintTask */
-/** @typedef {JestWorker & { lintFiles: LintTask }} Worker */
-/** @typedef {{ lintFiles: LintTask, end: () => Promise<void> }} Pool */
-/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, cancel: () => void, end: () => Promise<void> }} Solo */
 /**
  * How many threads the user asked for, as a count. A check is spread over one
  * fewer thread than the machine has, leaving webpack the one it builds on, and

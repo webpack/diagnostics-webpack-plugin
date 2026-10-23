@@ -3,6 +3,7 @@
 
 import { createRequire } from "node:module";
 
+import { sharingKey } from "../check.js";
 import { countThreads, createSolo } from "../threads.js";
 import { importFrom } from "../utils.js";
 
@@ -26,63 +27,85 @@ export { getTypeScriptOptions } from "./typescript-program.js";
 
 const nodeRequire = createRequire(import.meta.url);
 
-/** @type {WeakMap<EXPECTED_ANY, Map<string, Solo>>} */
-const workersByCompiler = new WeakMap();
+/**
+ * A worker and the compilers whose checks run on it.
+ * @typedef {{ worker: Solo, users: Set<EXPECTED_ANY> }} Shared
+ */
 
 /**
- * @param {EXPECTED_ANY} compiler the compiler the check ran for
- * @param {string} id a key unique to the check within that compiler
+ * Workers by what their program is built from rather than by compiler: the
+ * compilers of a `MultiCompiler` checking the same project under the same
+ * options share one program instead of holding one each.
+ * @type {Map<string, Shared>}
  */
-function dropWorker(compiler, id) {
-  const checks = workersByCompiler.get(compiler);
+const workers = new Map();
 
-  if (checks) checks.delete(id);
+/** @type {WeakMap<EXPECTED_ANY, Set<string>>} */
+const tapped = new WeakMap();
+
+/**
+ * Lets go of a worker for a compiler, and ends it once no compiler uses it.
+ * @param {EXPECTED_ANY} compiler the compiler the check ran for
+ * @param {string} key what the worker's program is built from
+ * @returns {Promise<void>} when the worker is done with, if it is
+ */
+async function release(compiler, key) {
+  const shared = workers.get(key);
+
+  if (!shared || !shared.users.delete(compiler)) return;
+  if (shared.users.size > 0) return;
+
+  workers.delete(key);
+
+  await shared.worker.end();
 }
 
 /**
- * The one worker this check runs on, kept for the compiler it runs for so that
- * the program it holds outlives the compilation that built it.
+ * The one worker this check runs on, kept for as long as a compiler uses it so
+ * that the program it holds outlives the compilation that built it.
  * @param {EXPECTED_ANY} compiler the compiler the check runs for
- * @param {string} id a key unique to the check within that compiler
+ * @param {string} key what the worker's program is built from
  * @param {Options} options the options the check was configured with
  * @returns {Solo | null} the worker, or nothing when it cannot be handed over
  */
-function getWorker(compiler, id, options) {
-  let checks = workersByCompiler.get(compiler);
+function getWorker(compiler, key, options) {
+  let shared = workers.get(key);
 
-  if (!checks) {
-    checks = new Map();
-    workersByCompiler.set(compiler, checks);
-  }
-
-  let worker = checks.get(id);
-
-  if (!worker) {
+  if (!shared) {
     const started = createSolo(nodeRequire.resolve("./typescript-worker.js"), [
       options,
     ]);
 
     if (!started) return null;
 
-    worker = started;
-    checks.set(id, worker);
+    shared = { worker: started, users: new Set() };
+    workers.set(key, shared);
+  }
 
-    // The program is the worker's, so in a watch it lives as long as the
-    // compiler does rather than as long as one of its builds. A watch that is
-    // closed without the compiler ends it too, or the thread outlives the work.
-    const stop = async () => {
-      dropWorker(compiler, id);
+  shared.users.add(compiler);
 
-      await /** @type {Solo} */ (worker).end();
-    };
+  let keys = tapped.get(compiler);
 
-    compiler.hooks.shutdown.tapPromise("DiagnosticsPlugin", stop);
+  if (!keys) {
+    keys = new Set();
+    tapped.set(compiler, keys);
+  }
+
+  // The program is the worker's, so in a watch it lives as long as the
+  // compiler does rather than as long as one of its builds. A watch that is
+  // closed without the compiler lets go of it too, or the thread outlives the
+  // work.
+  if (!keys.has(key)) {
+    keys.add(key);
+    compiler.hooks.shutdown.tapPromise("DiagnosticsPlugin", () =>
+      release(compiler, key),
+    );
     compiler.hooks.watchClose.tap("DiagnosticsPlugin", () => {
-      stop();
+      release(compiler, key);
     });
   }
 
-  return worker;
+  return shared.worker;
 }
 
 /**
@@ -107,8 +130,10 @@ async function create({ key, id: entry, options, compilation }) {
   // The program is this entry's: another check of the same tool reads the same
   // config file under options of its own.
   const id = `${key}\0${entry}`;
+  // Two checks that would build the same program share the worker holding it.
+  const program = sharingKey("typescript", options) || id;
   const worker = canThread(options)
-    ? getWorker(compilation.compiler, id, options)
+    ? getWorker(compilation.compiler, program, options)
     : null;
 
   /** @type {TypeScript} */
@@ -134,6 +159,10 @@ async function create({ key, id: entry, options, compilation }) {
   // The program is the whole project, so it is built once however many batches
   // of files the plugin hands over.
   let checked = false;
+  // The worker's answer to this compilation's run, which is what a newer
+  // compilation stops when it takes over.
+  /** @type {Promise<EXPECTED_ANY> | undefined} */
+  let answer;
 
   /**
    * @param {EXPECTED_ANY} one a diagnostic, or what a worker said of one
@@ -149,7 +178,9 @@ async function create({ key, id: entry, options, compilation }) {
       checked = true;
 
       if (worker) {
-        const found = await worker.lintFiles();
+        answer = worker.lintFiles();
+
+        const found = await answer;
 
         read = found.files;
         directories = found.directories;
@@ -172,7 +203,7 @@ async function create({ key, id: entry, options, compilation }) {
     // A run of an older compilation is left to finish on the worker while
     // webpack builds the next one, which waits for it before checking again.
     cancel() {
-      if (worker) worker.cancel();
+      if (worker && answer) worker.cancel(answer);
     },
     readFiles() {
       return read;
@@ -233,9 +264,7 @@ async function create({ key, id: entry, options, compilation }) {
     async cleanup() {
       if (!worker || compilation.compiler.watchMode) return;
 
-      dropWorker(compilation.compiler, id);
-
-      await worker.end();
+      await release(compilation.compiler, program);
     },
   };
 }

@@ -39,7 +39,7 @@ async function getTypeScript() {
 
 /**
  * @param {Options} options the options the check was configured with
- * @param {Int32Array} stop the last run the plugin no longer waits for, shared with it
+ * @param {Int32Array} stop the runs the plugin no longer waits for, each in the slot its number falls in, shared with it
  */
 function setup(options, stop) {
   checkOptions = options;
@@ -59,12 +59,11 @@ async function lintFiles(files, run) {
   const held = getHeld(compiler, "worker");
   // TypeScript asks between one file and the next, which is where a run
   // nobody waits for any more stops.
+  const requested = () => Atomics.load(stopped, run % stopped.length) === run;
   const cancellation = {
-    isCancellationRequested: () => Atomics.load(stopped, 0) >= run,
+    isCancellationRequested: requested,
     throwIfCancellationRequested() {
-      if (Atomics.load(stopped, 0) >= run) {
-        throw new ts.OperationCanceledException();
-      }
+      if (requested()) throw new ts.OperationCanceledException();
     },
   };
   const found = check(ts, checkOptions, held, cancellation);

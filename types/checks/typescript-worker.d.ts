@@ -11,6 +11,6 @@ export type TypeScript = EXPECTED_ANY;
 export function lintFiles(files: string[], run: number): Promise<EXPECTED_ANY>;
 /**
  * @param {Options} options the options the check was configured with
- * @param {Int32Array} stop the last run the plugin no longer waits for, shared with it
+ * @param {Int32Array} stop the runs the plugin no longer waits for, each in the slot its number falls in, shared with it
  */
 export function setup(options: Options, stop: Int32Array): void;

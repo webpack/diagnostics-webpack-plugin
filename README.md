@@ -342,7 +342,12 @@ pool of workers — so the option means the same thing whatever is being checked
 and a check added later gets it for nothing. ESLint threads its own work from
 9.34.0 under flat config; Stylelint threads none of its own, so it is pooled.
 TypeScript reads a program whole rather than a file at a time, so it is run on
-one worker: what a thread buys it is webpack's own thread back.
+one worker: what a thread buys it is webpack's own thread back. The compilers of
+a `MultiCompiler` whose TypeScript checks are configured alike share that worker
+and the program it holds, rather than each building and keeping one of their
+own. Over 600 files, two compilers built one after the other (`parallelism: 1`)
+went through a watch with one rebuild in 5.6–5.8 s and 9.8–10.4 s of CPU at
+467–483 MB, against 9.7–10.3 s, 18.7–20.0 s and 803–853 MB with a worker each.
 
 Prefer `"auto"` over a count. A check sizes `"auto"` against the machine, where a
 fixed number can end up competing with webpack for the same cores: over three

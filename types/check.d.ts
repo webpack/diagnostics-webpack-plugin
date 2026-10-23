@@ -34,6 +34,17 @@ export type Runner = {
 };
 export type ResultStore = Map<string, CheckResult | undefined>;
 /**
+ * What tells one check's run of a tool from another's, so that only two runs
+ * that would do the same work are shared.
+ * @param {string} name the name of the check
+ * @param {EnabledCheck["options"]} options the options it runs under
+ * @returns {string | undefined} the key, or nothing when they cannot be compared
+ */
+export function sharingKey(
+  name: string,
+  options: EnabledCheck["options"],
+): string | undefined;
+/**
  * Creates the runner synchronously so that the compilation hooks are tapped
  * before webpack starts building modules, whatever the tool takes to load. A
  * run the last compilation left to finish on its own is waited for first, so
