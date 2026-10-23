@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -177,7 +178,9 @@ describe("typed linting between builds", () => {
 
   it("should keep ESLint's cache when asked for and no TypeScript can follow imports", async () => {
     // Outside the package, where no TypeScript resolves.
-    const bare = mkdtempSync(join(tmpdir(), "typed-bare-"));
+    // As webpack names its modules: on macOS, the temporary directory is a
+    // link to another.
+    const bare = realpathSync(mkdtempSync(join(tmpdir(), "typed-bare-")));
 
     try {
       writeFileSync(join(bare, "entry.js"), "module.exports = 1;\n");

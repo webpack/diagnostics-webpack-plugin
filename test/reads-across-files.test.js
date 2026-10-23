@@ -123,20 +123,11 @@ describe("reading across files", () => {
     watching = compiler.watch({}, (err) => {
       assert.strictEqual(err, null);
 
-      if (edits === 0) {
-        edit();
-
-        return;
-      }
-
-      // macOS can tell of a file written before the watch started only once
-      // it has, and a rebuild for it lints that file too: edit the leaf again
-      // until a rebuild is for the edit alone.
-      const modified = [...(compiler.modifiedFiles || [])].filter(
-        (file) => file.endsWith(".js") && !file.endsWith("leaf.js"),
-      );
-
-      if (modified.length > 0) {
+      // A file written just before the watch started can have its time known
+      // to webpack only once it has, and the first rebuild then builds that
+      // module again too, as macOS does: what the second edit's rebuild lints
+      // is what an edit alone makes it lint.
+      if (edits < 2) {
         edit();
 
         return;
