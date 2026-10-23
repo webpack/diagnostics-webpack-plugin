@@ -4,10 +4,13 @@ export type TypeScript = EXPECTED_ANY;
 /**
  * Runs the check and answers with what crosses back: a `Diagnostic` holds the
  * source file it was found in, so each one is described and formatted here.
+ * @param {string[]} files nothing: the program is the config file's
+ * @param {number} run which run of the check this is
  * @returns {Promise<EXPECTED_ANY>} what it found, and what it read to find it
  */
-export function lintFiles(): Promise<EXPECTED_ANY>;
+export function lintFiles(files: string[], run: number): Promise<EXPECTED_ANY>;
 /**
  * @param {Options} options the options the check was configured with
+ * @param {Int32Array} stop the last run the plugin no longer waits for, shared with it
  */
-export function setup(options: Options): void;
+export function setup(options: Options, stop: Int32Array): void;

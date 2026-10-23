@@ -11,6 +11,9 @@ import { check, describe, getHeld } from "./typescript-program.js";
 /** @type {Options} */
 let checkOptions;
 
+/** @type {Int32Array} */
+let stopped;
+
 /** @type {Promise<TypeScript> | null} */
 let loading = null;
 
@@ -36,21 +39,35 @@ async function getTypeScript() {
 
 /**
  * @param {Options} options the options the check was configured with
+ * @param {Int32Array} stop the last run the plugin no longer waits for, shared with it
  */
-function setup(options) {
+function setup(options, stop) {
   checkOptions = options;
+  stopped = stop;
   loading = null;
 }
 
 /**
  * Runs the check and answers with what crosses back: a `Diagnostic` holds the
  * source file it was found in, so each one is described and formatted here.
+ * @param {string[]} files nothing: the program is the config file's
+ * @param {number} run which run of the check this is
  * @returns {Promise<EXPECTED_ANY>} what it found, and what it read to find it
  */
-async function lintFiles() {
+async function lintFiles(files, run) {
   const ts = await getTypeScript();
   const held = getHeld(compiler, "worker");
-  const found = check(ts, checkOptions, held);
+  // TypeScript asks between one file and the next, which is where a run
+  // nobody waits for any more stops.
+  const cancellation = {
+    isCancellationRequested: () => Atomics.load(stopped, 0) >= run,
+    throwIfCancellationRequested() {
+      if (Atomics.load(stopped, 0) >= run) {
+        throw new ts.OperationCanceledException();
+      }
+    },
+  };
+  const found = check(ts, checkOptions, held, cancellation);
   // Each on its own, so that what is left after `ignoreDiagnostics` can be
   // printed without asking the worker again. Each block carries the newline
   // TypeScript ends it with, which is what separates one from the next, so

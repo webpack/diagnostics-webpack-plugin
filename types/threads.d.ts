@@ -10,6 +10,7 @@ export type Pool = {
 };
 export type Solo = {
   lintFiles: () => Promise<EXPECTED_ANY>;
+  cancel: () => void;
   end: () => Promise<void>;
 };
 export type EXPECTED_ANY = any;
@@ -18,7 +19,7 @@ export type EXPECTED_ANY = any;
 /** @typedef {(files: string[]) => Promise<CheckResult[]>} LintTask */
 /** @typedef {JestWorker & { lintFiles: LintTask }} Worker */
 /** @typedef {{ lintFiles: LintTask, end: () => Promise<void> }} Pool */
-/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, end: () => Promise<void> }} Solo */
+/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, cancel: () => void, end: () => Promise<void> }} Solo */
 /**
  * How many threads the user asked for, as a count. A check is spread over one
  * fewer thread than the machine has, leaving webpack the one it builds on, and

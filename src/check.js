@@ -27,7 +27,7 @@ import { toPosixPath } from "./utils.js";
 /** @type {WeakMap<Compilation["compiler"], Map<string, ResultStore>>} */
 const resultStores = new WeakMap();
 
-/** @type {WeakMap<Compilation["compiler"], Map<string, Promise<void>>>} */
+/** @type {WeakMap<Compilation["compiler"], Map<string, { settled: Promise<void>, cancel: () => void }>>} */
 const detachedReports = new WeakMap();
 
 // A run of a check that is still going, so that two compilers over the same
@@ -106,6 +106,8 @@ function getResultStore(compilation, check) {
 /**
  * The report of a run left to finish on its own, taken so that the next run of
  * the same check waits for it rather than driving a second tool beside it.
+ * Nothing prints a report of an older compilation, so a check that can stop
+ * one is told to.
  * @param {Compilation} compilation compilation
  * @param {string} check a key unique to the check within the compiler
  * @returns {Promise<void> | undefined} the report still to land, if there is one
@@ -119,7 +121,11 @@ function takeDetachedReport(compilation, check) {
 
   reports.delete(check);
 
-  return report;
+  if (!report) return undefined;
+
+  report.cancel();
+
+  return report.settled;
 }
 
 /**
@@ -497,13 +503,17 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
       detachedReports.set(compilation.compiler, reports);
     }
 
-    reports.set(
-      checkKey,
-      report.then(
+    reports.set(checkKey, {
+      settled: report.then(
         () => {},
         () => {},
       ),
-    );
+      cancel: () => {
+        pending.then((instance) => {
+          if (instance && instance.cancel) instance.cancel();
+        });
+      },
+    });
   }
 
   return { detach, keep, lint, report };

@@ -515,7 +515,13 @@ The work is moved out of the rebuild rather than off the machine: an edit
 arriving while such a check is still running waits for the rest of it, since a
 check holds the thread the build runs on. A report a newer rebuild has already
 overtaken is dropped, and a check never has two of its runs going at once — the
-next starts when the last has reported.
+next starts when the last has reported. A TypeScript check on a worker of its
+own (see [`threads`](#threads)) stops such a run as soon as the next rebuild
+starts, between one file and the next: what the program got through is kept,
+and the next run checks the rest. An edit made while a long run is going is
+then reported once its own run is done, without waiting for the rest of the
+old one. Over 600 files, an edit made while an earlier one was still being
+checked was reported after 2.3–2.6 s instead of 4.2–4.5 s.
 
 #### `ignoreDiagnostics`
 

@@ -10,7 +10,7 @@ import { Worker as JestWorker } from "jest-worker";
 /** @typedef {(files: string[]) => Promise<CheckResult[]>} LintTask */
 /** @typedef {JestWorker & { lintFiles: LintTask }} Worker */
 /** @typedef {{ lintFiles: LintTask, end: () => Promise<void> }} Pool */
-/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, end: () => Promise<void> }} Solo */
+/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, cancel: () => void, end: () => Promise<void> }} Solo */
 
 /**
  * How many threads the user asked for, as a count. A check is spread over one
@@ -107,11 +107,17 @@ function createPool(source, size, setupArgs) {
 function createSolo(source, setupArgs) {
   if (!isTransferable(setupArgs)) return null;
 
+  // Shared with the worker rather than sent to it: a message would wait behind
+  // the run it is meant to stop. It holds the last run nobody waits for any
+  // more, and each run is numbered so that it knows whether it is one of them.
+  const stopped = new Int32Array(new SharedArrayBuffer(4));
+  let issued = 0;
+
   let worker = /** @type {Worker | null} */ (
     new JestWorker(source, {
       enableWorkerThreads: true,
       numWorkers: 1,
-      setupArgs,
+      setupArgs: [...setupArgs, stopped],
     })
   );
 
@@ -120,7 +126,13 @@ function createSolo(source, setupArgs) {
       /* istanbul ignore next */
       if (!worker) return undefined;
 
-      return /** @type {Worker} */ (worker).lintFiles([]);
+      issued += 1;
+
+      return /** @type {EXPECTED_ANY} */ (worker).lintFiles([], issued);
+    },
+    // Every run asked for so far, whether it has started or is still queued.
+    cancel: () => {
+      Atomics.store(stopped, 0, issued);
     },
     end: async () => {
       /* istanbul ignore else */

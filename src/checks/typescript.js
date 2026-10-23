@@ -169,6 +169,11 @@ async function create({ key, id: entry, options, compilation }) {
 
       return found.diagnostics;
     },
+    // A run of an older compilation is left to finish on the worker while
+    // webpack builds the next one, which waits for it before checking again.
+    cancel() {
+      if (worker) worker.cancel();
+    },
     readFiles() {
       return read;
     },
