@@ -245,6 +245,7 @@ export default {
     return getSchemas().own;
   },
   defaults: {
+    cacheLocation: "node_modules/.cache/diagnostics-webpack-plugin/typescript",
     extensions: ["ts", "tsx", "mts", "cts"],
   },
   defaultExclude: () => "**/node_modules/**",

@@ -1,8 +1,10 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
 
 import { omitPluginOptions } from "../utils.js";
 
@@ -113,8 +115,10 @@ function keepSourceFiles(host, files, seen) {
     const file = read(fileName, languageVersion, onError, shouldCreate);
 
     if (file && version) {
-      // What the builder compares to decide which files it must check again.
-      file.version = version;
+      // What the builder compares to decide which files it must check again:
+      // what the file holds, so that a state written by another process — a
+      // checkout, a CI cache — is told from the files as they are now.
+      file.version = createHash("sha1").update(file.text).digest("hex");
       files.set(fileName, { version, file });
     }
 
@@ -392,6 +396,36 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
 }
 
 /**
+ * Where the state of a program is written between runs, so that a build
+ * after this one type checks what changed since rather than everything: one
+ * file for each config file and the options it is read with, under the
+ * check's `cacheLocation`.
+ * @param {Options} options options
+ * @param {string} configFile the config file
+ * @param {EXPECTED_ANY} compilerOptions what the program is built with
+ * @returns {string | undefined} the file, or nothing where the cache is off
+ */
+function stateFileFor(options, configFile, compilerOptions) {
+  if (options.cache === false) return undefined;
+
+  const location = resolve(
+    String(options.context),
+    String(
+      options.cacheLocation ||
+        "node_modules/.cache/diagnostics-webpack-plugin/typescript",
+    ),
+  );
+
+  if (location.endsWith(".tsbuildinfo")) return location;
+
+  const name = createHash("sha1")
+    .update(`${configFile}\0${JSON.stringify(compilerOptions)}`)
+    .digest("hex");
+
+  return join(location, `${name}.tsbuildinfo`);
+}
+
+/**
  * The program the config file describes, with emit off: webpack writes the
  * output, so a check that wrote any of its own would fight it.
  * @param {TypeScript} ts the loaded TypeScript
@@ -482,9 +516,32 @@ function check(ts, options, held) {
   }
 
   held.seen.clear();
-  held.program = ts.createSemanticDiagnosticsBuilderProgram(
+
+  // A program that writes nothing keeps its state in the cache, where the
+  // first program of a later run reads it back: the files whose content is
+  // the same are not checked again. One that writes is left as it was.
+  const stateFile = overrides.noEmit
+    ? stateFileFor(options, configFile, parsed.options)
+    : undefined;
+  const compilerOptions = stateFile
+    ? { ...parsed.options, incremental: true, tsBuildInfoFile: stateFile }
+    : parsed.options;
+
+  if (stateFile && !held.program) {
+    try {
+      held.program = ts.readBuilderProgram(compilerOptions, held.host);
+    } catch {
+      // Unreadable, or written by another TypeScript: checked from nothing.
+    }
+  }
+
+  held.program = (
+    stateFile
+      ? ts.createEmitAndSemanticDiagnosticsBuilderProgram
+      : ts.createSemanticDiagnosticsBuilderProgram
+  )(
     parsed.fileNames,
-    parsed.options,
+    compilerOptions,
     held.host,
     held.program,
     parsed.errors,
@@ -522,6 +579,19 @@ function check(ts, options, held) {
 
   /** @type {string[]} */
   const writes = [];
+
+  if (stateFile) {
+    try {
+      held.program.emitBuildInfo(
+        (/** @type {string} */ file, /** @type {string} */ text) => {
+          mkdirSync(dirname(file), { recursive: true });
+          writeFileSync(file, text);
+        },
+      );
+    } catch {
+      // A state that cannot be written costs the next run its head start.
+    }
+  }
 
   if (!overrides.noEmit) {
     for (const written of [

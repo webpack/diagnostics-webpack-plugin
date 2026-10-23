@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import DiagnosticsPlugin from "../../../src/index.js";
@@ -26,7 +28,19 @@ export default (context, pluginConf = {}, webpackConf = {}) => {
     plugins: [
       new DiagnosticsPlugin({
         ...plugin,
-        checks: [{ use: "typescript", ...typescript }],
+        checks: [
+          {
+            use: "typescript",
+            // A state of its own for each compiler, so that no test starts
+            // from what another left behind.
+            cacheLocation: join(
+              tmpdir(),
+              `diagnostics-test-${randomUUID()}`,
+              "typescript",
+            ),
+            ...typescript,
+          },
+        ],
       }),
     ],
     ...webpackConf,
