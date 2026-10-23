@@ -158,6 +158,46 @@ function threadsItself(version) {
 }
 
 /**
+ * Read without loading ESLint, which the plugin asks before any build starts.
+ * @param {string} specifier the `eslintPath`, or `eslint`
+ * @returns {string} the version of the ESLint it names, or `0.0` when it cannot be read
+ */
+function versionOf(specifier) {
+  try {
+    const manifest =
+      isAbsolute(specifier) || specifier.startsWith(".")
+        ? join(specifier, "package.json")
+        : `${specifier}/package.json`;
+
+    return String(nodeRequire(nodeRequire.resolve(manifest)).version);
+  } catch {
+    return "0.0";
+  }
+}
+
+/**
+ * ESLint starts the workers of a threaded lint for every `lintFiles` and loads
+ * the configuration and its plugins in each of them, so a build handing it
+ * files in batches as webpack builds them pays for that once per batch.
+ * Threaded by ESLint, a check is handed every file once the graph is done;
+ * the pool of our own lives across batches and is handed them as they come.
+ * @param {Options} options options
+ * @returns {boolean} whether ESLint threads the lint itself
+ */
+function lintsOnce(options) {
+  if (options.configType !== "flat") return false;
+
+  const written = /** @type {EXPECTED_ANY} */ (options).concurrency;
+
+  if (written !== undefined) return written !== "off" && written !== 1;
+
+  return (
+    countThreads(options.threads) > 1 &&
+    threadsItself(versionOf(String(options.eslintPath || "eslint")))
+  );
+}
+
+/**
  * @param {Options} options plugin options
  * @returns {ESLintOptions} the options ESLint itself understands
  */
@@ -649,6 +689,7 @@ export default {
   defaultExclude: () => "**/node_modules/**",
   resultPath: (/** @type {EXPECTED_ANY} */ result) =>
     /** @type {LintResult} */ (result).filePath,
+  lintsOnce,
   readsAcrossFiles: (/** @type {EXPECTED_ANY} */ compiler) =>
     acrossFilesByCompiler.get(compiler) === true,
   create,

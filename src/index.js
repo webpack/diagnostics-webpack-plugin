@@ -489,6 +489,11 @@ class DiagnosticsWebpackPlugin {
         /** @type {string[]} */
         const deferred = [];
         let scheduled = false;
+        // Handed in batches while webpack builds, unless the check's tool
+        // pays for a run of its own every time it is handed some.
+        const early = !(
+          check.adapter.lintsOnce && check.adapter.lintsOnce(check.options)
+        );
 
         const handOver = () => {
           scheduled = false;
@@ -505,7 +510,7 @@ class DiagnosticsWebpackPlugin {
           if (late) return;
 
           if (!atEnd) {
-            if (scheduled || pending.length < EARLY_BATCH) return;
+            if (!early || scheduled || pending.length < EARLY_BATCH) return;
 
             scheduled = true;
             setImmediate(() => flush(true));
