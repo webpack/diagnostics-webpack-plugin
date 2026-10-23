@@ -173,6 +173,18 @@ describe("lintDependentsAfterBuild", () => {
     );
   });
 
+  it("should do the same for a check told it reads across files", (t, done) => {
+    // An adapter that says nothing of it, answered for by the option.
+    const { readsAcrossFiles, ...silent } = adapter;
+
+    assert.strictEqual(typeof readsAcrossFiles, "function");
+    run(
+      { use: silent, readsAcrossFiles: true },
+      (log) => /found 1/u.test(log),
+      done,
+    );
+  });
+
   it("should print why linting the rest failed", (t, done) => {
     run(
       {},

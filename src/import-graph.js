@@ -1,9 +1,11 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
-import { toPosixPath } from "../utils.js";
+import { toPosixPath } from "./utils.js";
 
 /** @typedef {EXPECTED_ANY} TypeScript */
 
@@ -197,4 +199,54 @@ function affectedFiles(graph, files, changed) {
   return new Set([...reached].filter((file) => covered.has(file)));
 }
 
-export { affectedFiles, createGraph };
+/**
+ * The graphs a compiler keeps, one per check. A graph is changed by every
+ * question asked of it — what changed is dropped from it, and a changed config
+ * empties it — so two checks sharing one would each see the other's answer.
+ * @type {WeakMap<EXPECTED_ANY, Map<string, Promise<Graph | undefined>>>}
+ */
+const graphsByCompiler = new WeakMap();
+
+/**
+ * The graph a compiler keeps for one check, read with the TypeScript the
+ * check's project installs — the one its own tooling resolves imports with.
+ * @param {EXPECTED_ANY} compiler the compiler the graph lives as long as
+ * @param {string} context where the project's TypeScript is looked up from
+ * @param {string} owner what tells the check from the compiler's others
+ * @returns {Promise<Graph | undefined>} the graph, or nothing without a TypeScript to read it with
+ */
+function getGraph(compiler, context, owner) {
+  let graphs = graphsByCompiler.get(compiler);
+
+  if (!graphs) {
+    graphs = new Map();
+    graphsByCompiler.set(compiler, graphs);
+  }
+
+  const key = `${owner}\0${context}`;
+  let graph = graphs.get(key);
+
+  if (!graph) {
+    graph = (async () => {
+      try {
+        const loaded = await import(
+          pathToFileURL(
+            createRequire(join(context, "package.json")).resolve("typescript"),
+          ).href
+        );
+
+        return createGraph(loaded.default || loaded);
+      } catch {
+        // Without a TypeScript of the project's own there is nothing to say
+        // which file reads which, and every file is linted again instead.
+        return undefined;
+      }
+    })();
+
+    graphs.set(key, graph);
+  }
+
+  return graph;
+}
+
+export { affectedFiles, createGraph, getGraph };

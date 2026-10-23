@@ -55,6 +55,9 @@
     "outputReport": {
       "$ref": "./shared-options.json#/properties/outputReport"
     },
+    "readsAcrossFiles": {
+      "$ref": "./shared-options.json#/properties/readsAcrossFiles"
+    },
     "reportAs": {
       "$ref": "./shared-options.json#/properties/reportAs"
     },

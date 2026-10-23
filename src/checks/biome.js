@@ -161,4 +161,11 @@ export default {
   create,
   resultPath: (/** @type {EXPECTED_ANY} */ result) =>
     /** @type {FileResult} */ (result).filename,
+  // Biome's project and types domains — `noImportCycles`, `noFloatingPromises`
+  // — answer for a file from the files it imports, and which rules sit in them
+  // is Biome's to say from one release to the next, so its config cannot be
+  // read for the answer the way oxlint's can. A rebuild lints again what a
+  // change reaches, which a run of Biome barely notices; a project using none
+  // of those rules can write `readsAcrossFiles: false`.
+  readsAcrossFiles: () => true,
 };

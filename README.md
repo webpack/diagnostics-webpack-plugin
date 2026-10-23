@@ -101,6 +101,7 @@ Every check to run is an entry in `checks`, named by its `use`. The list may nam
 | [`fix`](#fix)                                                                                                       | Shared | Whether the tool writes back what it can fix.                                |
 | [`formatter`](#formatter)                                                                                           | Shared | How results are turned into the message that is reported.                    |
 | [`outputReport`](#outputreport)                                                                                     | Shared | A file the same results are written to.                                      |
+| [`readsAcrossFiles`](#readsacrossfiles)                                                                             | Shared | Whether a file's results can turn on another, so a rebuild lints importers.  |
 | [`reportAs`](#reportas)                                                                                             | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
 | [`lintDependentsAfterBuild`](#lintdependentsafterbuild)                                                             | Shared | Whether a watch rebuild waits for the files that turn on a change.           |
 | [`resourceQueryExclude`](#resourcequeryexclude)                                                                     | Shared | Which module queries are left out.                                           |
@@ -369,8 +370,8 @@ type lintDependentsAfterBuild = boolean;
 - Default: `false`
 
 Whether a watch rebuild waits for the files it did not rebuild but has to lint
-again — under [typed linting](#eslint), the ones importing a file that changed,
-however indirectly. Set, the build lints what it rebuilt and reports those from
+again — for a check that [reads across files](#readsacrossfiles), the ones
+importing a file that changed, however indirectly. Set, the build lints what it rebuilt and reports those from
 their last run, and they are linted again once the build is over. When that
 changes what the check reports, the new report is printed to the terminal, and
 the next build carries it — so a dev server overlays it from then on rather than
@@ -388,6 +389,50 @@ printed 2.4 s after the edit. A build that is not watched, the first build of a
 watch, and a check writing an [`outputReport`](#outputreport) lint everything
 before they finish whatever this says — that file is written with the build, and
 would otherwise hold what the build reported rather than what was found after.
+
+#### `readsAcrossFiles`
+
+- Type:
+
+```ts
+type readsAcrossFiles = boolean;
+```
+
+- Default: read from the tool's configuration
+
+Whether what a check reports of one file can turn on another — a type the file
+imports, an import cycle through it. A rebuild otherwise lints only what webpack
+rebuilt and reports every other file from its last run, which is wrong for such a
+check: an edit to one file can change what is true of the files importing it. So
+a rebuild of a check that reads across files lints the files that changed and
+every file importing one of them, however indirectly, and keeps the rest.
+
+Which file imports which is read with the project's own TypeScript, through the
+`tsconfig.json` nearest each file, so an `import type` counts though a bundler
+drops it before webpack sees it — and this holds for every check, whatever tool
+it runs. A change that could reach files some other way — a declaration file
+nothing imports, a `declare global`, a config file, an import that resolves to
+nothing — lints every file again, as does a project without TypeScript.
+
+Left out, each check reads it from its tool's configuration:
+
+| Check      | Reads across files when                                                             |
+| :--------- | :---------------------------------------------------------------------------------- |
+| ESLint     | `parserOptions.project` or `projectService` is set — [typed linting](#eslint)       |
+| oxlint     | `--type-aware`, `--type-check` or `--import-plugin`, or the config turns them on    |
+| Biome      | always: which rules read the project is Biome's to say from one release to the next |
+| Stylelint  | never                                                                               |
+| TypeScript | does not apply: the program is checked whole                                        |
+
+Written down, it answers for the check whatever its configuration says — `false`
+for a Biome project using none of the rules that read other files, `true` for a
+check of your own that does not say:
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "biome", readsAcrossFiles: false }],
+});
+```
 
 #### `resourceQueryExclude`
 
@@ -602,7 +647,7 @@ Alongside the shared options you can pass any [ESLint Node.js API option](https:
 
 A rebuild lints only the files webpack rebuilt and reports the rest from the previous run, so [`lintOnStart`](#lintonstart) is only worth setting to start a watch run quiet.
 
-**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints the files that changed and every file importing one of them, however indirectly, and ESLint's own [`cache`](#cache) is turned off for it, since that cache is keyed on each file's own contents and would answer for a type it never read. Which file imports which is read with the project's own TypeScript, through the `tsconfig.json` nearest each file, so an `import type` counts though a bundler drops it before webpack sees it. A change that could reach files some other way — a declaration file nothing imports, a `declare global`, a config file, an import that resolves to nothing — lints every file again. Over three hundred modules, an edit near the bottom of the import tree took a rebuild from 2.0 s to 0.35 s, and one halfway up to 1.2 s.
+**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints the files that changed and every file importing one of them, however indirectly — see [`readsAcrossFiles`](#readsacrossfiles) — and ESLint's own [`cache`](#cache) is turned off for it, since that cache is keyed on each file's own contents and would answer for a type it never read. Over three hundred modules, an edit near the bottom of the import tree took a rebuild from 2.0 s to 0.35 s, and one halfway up to 1.2 s.
 
 ### `configType`
 
@@ -701,6 +746,11 @@ moves them from there as it does for every check. And the options this check doe
 not name are not guessed at: write them as [`args`](#args), the flags oxlint
 itself documents.
 
+Type-aware rules and the import plugin — `import/no-cycle` reports a file for
+what the files it imports import — answer for a file from others, so where
+`args` or the config turns them on, a rebuild lints again every file a change
+reaches. See [`readsAcrossFiles`](#readsacrossfiles).
+
 ### `oxlintPath`
 
 - Type:
@@ -752,6 +802,12 @@ new DiagnosticsPlugin({ checks: ["biome"] });
 Like the oxlint check this runs a binary and reads the JSON it answers with,
 which Biome calls an experimental reporter — a release of its own may move the
 shape, and it is the only reporter carrying the severities this check needs.
+
+Biome's project and types rules — `noImportCycles`, `noFloatingPromises` —
+answer for a file from the files it imports, and which rules those are is not
+something its config says, so a rebuild lints again every file a change reaches.
+A project using none of them can write
+[`readsAcrossFiles: false`](#readsacrossfiles) to lint only what webpack rebuilt.
 
 ### `biomePath`
 
@@ -1032,6 +1088,8 @@ module.exports = {
 ```
 
 `label`, `filesSource`, `defaults`, `defaultExclude` and `schema` are optional; the plugin fills in the defaults of a module-scanning check that excludes `node_modules`.
+
+An adapter whose results come per file says which file with `resultPath(result)`, and a rebuild then lints only what changed. One whose tool reads other files to answer for one says so with `readsAcrossFiles(compiler, options)`, and the plugin lints again every file a change reaches through its own import graph — or through the adapter's `affectedFiles(compiler, files, changed)`, where it knows better.
 
 ## Migrating
 

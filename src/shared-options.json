@@ -125,7 +125,7 @@
       ]
     },
     "lintDependentsAfterBuild": {
-      "description": "In watch mode, lint a rebuild's files whose results can turn on the ones that changed — under typed linting, the files importing them — after the build rather than during it. The build reports them from their last run, and what changes once they are linted again is printed when it does and carried by the next build.",
+      "description": "In watch mode, lint a rebuild's files whose results can turn on the ones that changed — for a check that reads across files, the files importing them — after the build rather than during it. The build reports them from their last run, and what changes once they are linted again is printed when it does and carried by the next build.",
       "type": "boolean"
     },
     "outputReport": {
@@ -163,6 +163,10 @@
           }
         }
       ]
+    },
+    "readsAcrossFiles": {
+      "description": "Whether what the check reports of one file can turn on another — a type it imports, an import cycle through it — so that a rebuild lints again every file a change reaches rather than keeping what it said last time of the ones that did not change. Left out, the check reads it from the tool's configuration where it can: ESLint's typed linting, oxlint's type-aware rules and import plugin, and Biome always.",
+      "type": "boolean"
     },
     "reportAs": {
       "description": "What a check reports its results as: `\"error\"` reports them as webpack errors and fails the build, `\"warning\"` reports them as webpack warnings, `\"log\"` writes them to the log and leaves the build carrying neither, `false` reports nothing. One value covers a check's errors and its warnings alike, an object sets them apart, and a severity an object leaves out keeps its own.",
