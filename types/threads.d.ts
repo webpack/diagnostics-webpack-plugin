@@ -47,9 +47,14 @@ export function createPool(
  * a thread buys it is webpack's own thread back rather than a share of the work.
  * @param {string} source the check's worker entry
  * @param {unknown[]} setupArgs what the entry needs to load its tool
+ * @param {number=} memoryLimit the most the worker's heap may hold, in MB
  * @returns {Solo | null} the worker, or nothing when the setup cannot be handed over
  */
-export function createSolo(source: string, setupArgs: unknown[]): Solo | null;
+export function createSolo(
+  source: string,
+  setupArgs: unknown[],
+  memoryLimit?: number | undefined,
+): Solo | null;
 /**
  * Whether a value survives the structured clone a worker is handed its setup
  * over. A function does not, and an option holding one — a formatter written

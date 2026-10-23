@@ -102,9 +102,10 @@ function createPool(source, size, setupArgs) {
  * a thread buys it is webpack's own thread back rather than a share of the work.
  * @param {string} source the check's worker entry
  * @param {unknown[]} setupArgs what the entry needs to load its tool
+ * @param {number=} memoryLimit the most the worker's heap may hold, in MB
  * @returns {Solo | null} the worker, or nothing when the setup cannot be handed over
  */
-function createSolo(source, setupArgs) {
+function createSolo(source, setupArgs, memoryLimit) {
   if (!isTransferable(setupArgs)) return null;
 
   let worker = /** @type {Worker | null} */ (
@@ -112,6 +113,9 @@ function createSolo(source, setupArgs) {
       enableWorkerThreads: true,
       numWorkers: 1,
       setupArgs,
+      ...(memoryLimit
+        ? { resourceLimits: { maxOldGenerationSizeMb: memoryLimit } }
+        : {}),
     })
   );
 

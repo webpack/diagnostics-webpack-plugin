@@ -18,6 +18,11 @@
       "description": "Build the projects the config file references first, the way `tsc -b` does, and report what the whole solution finds.",
       "type": "boolean"
     },
+    "memoryLimit": {
+      "description": "The most memory, in MB, the worker the check runs on may hold for its program. Over it, the check reports so and starts from nothing on the next build rather than taking webpack's process with it. Unset, the worker may hold as much as Node gives a thread. At least 16: below that a thread cannot even start.",
+      "type": "number",
+      "minimum": 16
+    },
     "mode": {
       "description": "What the check writes as well as reports: `readonly` writes nothing, `write-tsbuildinfo` writes only `.tsbuildinfo`, `write-dts` writes declarations with it, and `write-references` writes everything the compiler emits. Defaults to `write-dts` under `build`, where a project reads the declarations of the one it references, and `readonly` otherwise.",
       "enum": ["readonly", "write-tsbuildinfo", "write-dts", "write-references"]

@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 
 import typescript from "typescript";
 
+import { countThreads } from "../../src/threads.js";
+
 import pack from "./utils/pack.js";
 
 /**
@@ -84,4 +86,19 @@ describe("threads", () => {
 
     assert.match(messages[0], /codes 2322,2322/u);
   });
+
+  it(
+    "should report the memory its worker ran out of rather than take the process with it",
+    // Where there is no thread to spare the check runs where webpack does,
+    // which the limit is not for.
+    { skip: countThreads("auto") < 2 && "no thread to run the check on" },
+    async () => {
+      const [message] = await reported({ threads: "auto", memoryLimit: 16 });
+
+      assert.match(message, /ran out of the 16 MB of memory `memoryLimit`/u);
+
+      // Started again from nothing, with room this time.
+      assert.match((await reported({ threads: "auto" }))[0], /TS2322/u);
+    },
+  );
 });

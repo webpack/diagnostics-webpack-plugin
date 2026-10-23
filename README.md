@@ -88,28 +88,28 @@ Every check to run is an entry in `checks`, named by its `use`. The list may nam
 
 ### Every option
 
-| Option                                                                                                              | Layer  | What it decides                                                              |
-| :------------------------------------------------------------------------------------------------------------------ | :----- | :--------------------------------------------------------------------------- |
-| [`checks`](#checks)                                                                                                 | Plugin | Which checks run, and the options only each of them understands.             |
-| [`context`](#context)                                                                                               | Plugin | The folder every relative `files` and `exclude` pattern is resolved against. |
-| [`lintOnStart`](#lintonstart)                                                                                       | Plugin | Whether the first compilation checks everything it covers.                   |
-| [`cache`](#cache)                                                                                                   | Shared | Whether the tool keeps a cache of its own between runs.                      |
-| [`cacheLocation`](#cachelocation)                                                                                   | Shared | Where that cache is written.                                                 |
-| [`exclude`](#exclude)                                                                                               | Shared | What is left out.                                                            |
-| [`extensions`](#extensions)                                                                                         | Shared | Which extensions a named folder is walked for.                               |
-| [`files`](#files)                                                                                                   | Shared | What to check: naming it checks every file it matches, built or not.         |
-| [`fix`](#fix)                                                                                                       | Shared | Whether the tool writes back what it can fix.                                |
-| [`formatter`](#formatter)                                                                                           | Shared | How results are turned into the message that is reported.                    |
-| [`outputReport`](#outputreport)                                                                                     | Shared | A file the same results are written to.                                      |
-| [`readsAcrossFiles`](#readsacrossfiles)                                                                             | Shared | Whether a file's results can turn on another, so a rebuild lints importers.  |
-| [`reportAs`](#reportas)                                                                                             | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
-| [`resourceQueryExclude`](#resourcequeryexclude)                                                                     | Shared | Which module queries are left out.                                           |
-| [`threads`](#threads)                                                                                               | Shared | How wide the work is spread.                                                 |
-| [`configType`, `eslintPath`](#eslint)                                                                               | Check  | ESLint's own.                                                                |
-| [`stylelintPath`](#stylelint)                                                                                       | Check  | Stylelint's own.                                                             |
-| [`oxlintPath`, `configFile`, `args`](#oxlint)                                                                       | Check  | oxlint's own.                                                                |
-| [`biomePath`, `command`, `configFile`, `args`](#biome)                                                              | Check  | Biome's own.                                                                 |
-| [`typescriptPath`, `configFile`, `compilerOptions`, `build`, `diagnosticOptions`, `ignoreDiagnostics`](#typescript) | Check  | TypeScript's own.                                                            |
+| Option                                                                                                                             | Layer  | What it decides                                                              |
+| :--------------------------------------------------------------------------------------------------------------------------------- | :----- | :--------------------------------------------------------------------------- |
+| [`checks`](#checks)                                                                                                                | Plugin | Which checks run, and the options only each of them understands.             |
+| [`context`](#context)                                                                                                              | Plugin | The folder every relative `files` and `exclude` pattern is resolved against. |
+| [`lintOnStart`](#lintonstart)                                                                                                      | Plugin | Whether the first compilation checks everything it covers.                   |
+| [`cache`](#cache)                                                                                                                  | Shared | Whether the tool keeps a cache of its own between runs.                      |
+| [`cacheLocation`](#cachelocation)                                                                                                  | Shared | Where that cache is written.                                                 |
+| [`exclude`](#exclude)                                                                                                              | Shared | What is left out.                                                            |
+| [`extensions`](#extensions)                                                                                                        | Shared | Which extensions a named folder is walked for.                               |
+| [`files`](#files)                                                                                                                  | Shared | What to check: naming it checks every file it matches, built or not.         |
+| [`fix`](#fix)                                                                                                                      | Shared | Whether the tool writes back what it can fix.                                |
+| [`formatter`](#formatter)                                                                                                          | Shared | How results are turned into the message that is reported.                    |
+| [`outputReport`](#outputreport)                                                                                                    | Shared | A file the same results are written to.                                      |
+| [`readsAcrossFiles`](#readsacrossfiles)                                                                                            | Shared | Whether a file's results can turn on another, so a rebuild lints importers.  |
+| [`reportAs`](#reportas)                                                                                                            | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
+| [`resourceQueryExclude`](#resourcequeryexclude)                                                                                    | Shared | Which module queries are left out.                                           |
+| [`threads`](#threads)                                                                                                              | Shared | How wide the work is spread.                                                 |
+| [`configType`, `eslintPath`](#eslint)                                                                                              | Check  | ESLint's own.                                                                |
+| [`stylelintPath`](#stylelint)                                                                                                      | Check  | Stylelint's own.                                                             |
+| [`oxlintPath`, `configFile`, `args`](#oxlint)                                                                                      | Check  | oxlint's own.                                                                |
+| [`biomePath`, `command`, `configFile`, `args`](#biome)                                                                             | Check  | Biome's own.                                                                 |
+| [`typescriptPath`, `configFile`, `compilerOptions`, `build`, `memoryLimit`, `diagnosticOptions`, `ignoreDiagnostics`](#typescript) | Check  | TypeScript's own.                                                            |
 
 Anything else written in a `checks` entry is handed to the tool itself, so its
 own Node.js API options go next to these.
@@ -956,6 +956,33 @@ around 200 ms on every rebuild for as long as an error stands, since a project
 that fails is never up to date. Pair it with
 [`reportAs: "log"`](#reportas) if you would rather a watch rebuild did not wait
 for that.
+
+### `memoryLimit`
+
+- Type:
+
+```ts
+type memoryLimit = number;
+```
+
+- Default: `undefined`, which is what Node gives a thread
+
+The most memory, in MB, the worker the check runs on may hold for its program.
+Over it, the check reports so — naming the limit — and the next build starts
+the program from nothing, rather than a runaway program taking webpack's
+process with it. It applies only where the check has a worker of its own (see
+[`threads`](#threads)), and has to be at least 16, below which a thread cannot
+even start.
+
+It bounds memory rather than saving any: over three hundred files, a check
+that peaked at 588 MB without one peaked at 555 MB under 512 and took 10%
+longer, the collector working harder near the limit, and under 160 it ran out.
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "typescript", memoryLimit: 2048 }],
+});
+```
 
 ### `mode`
 

@@ -58,9 +58,11 @@ function getWorker(compiler, id, options) {
   let worker = checks.get(id);
 
   if (!worker) {
-    const started = createSolo(nodeRequire.resolve("./typescript-worker.js"), [
-      options,
-    ]);
+    const started = createSolo(
+      nodeRequire.resolve("./typescript-worker.js"),
+      [options],
+      typeof options.memoryLimit === "number" ? options.memoryLimit : undefined,
+    );
 
     if (!started) return null;
 
@@ -149,7 +151,32 @@ async function create({ key, id: entry, options, compilation }) {
       checked = true;
 
       if (worker) {
-        const found = await worker.lintFiles();
+        /** @type {EXPECTED_ANY} */
+        let found;
+
+        try {
+          found = await worker.lintFiles();
+        } catch (error) {
+          // The program went with the worker, so the next build starts one
+          // from nothing.
+          dropWorker(compilation.compiler, id);
+          await worker.end();
+
+          if (
+            /ran out of memory/u.test(
+              String(/** @type {Error} */ (error).message),
+            )
+          ) {
+            throw new Error(
+              options.memoryLimit
+                ? `ran out of the ${options.memoryLimit} MB of memory \`memoryLimit\` lets its worker hold: raise it, or set \`skipLibCheck\` to check less.`
+                : "ran out of the memory its worker may hold: set `memoryLimit` higher than Node's default, or `skipLibCheck` to check less.",
+              { cause: error },
+            );
+          }
+
+          throw error;
+        }
 
         read = found.files;
         directories = found.directories;
