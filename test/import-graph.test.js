@@ -275,6 +275,37 @@ describe("import graph", () => {
 
     assert.strictEqual(affected(all, ["leaf.ts"]), undefined);
   });
+
+  it("should keep answering for what a change reaches where a stylesheet is imported", () => {
+    // Webpack bundles it; TypeScript resolves it to nothing, and nothing
+    // written later turns it into a type.
+    write(
+      "alone.ts",
+      'import "./styles.css";\nimport logo from "./logo.svg?url";\nexport const a = logo;\n',
+    );
+
+    assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+      "leaf.ts",
+      "middle.ts",
+      "top.ts",
+    ]);
+  });
+
+  it("should answer for every file where a stylesheet can be read through a declaration beside it", () => {
+    write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          moduleResolution: "bundler",
+          allowArbitraryExtensions: true,
+        },
+      }),
+    );
+    write("alone.ts", 'import "./styles.css";\nexport const a = 1;\n');
+
+    assert.strictEqual(affected(all, ["leaf.ts"]), undefined);
+  });
 });
 
 describe("the graph a compiler keeps", () => {
