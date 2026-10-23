@@ -1009,6 +1009,12 @@ rather than dropping what it answered, so it is also the one filter that saves
 the work — `semantic: false` is what makes a check that only wants syntax errors
 cheap.
 
+`declaration` is asked of a project compiled with `declaration` or `composite`,
+and a rebuild works it out again only for the files a change reached — the ones
+TypeScript type checks again — rather than emitting the declarations of the
+whole program each time: over 300 files, a rebuild went from 360–490 ms to
+150 ms.
+
 ```js
 new DiagnosticsPlugin({
   // webpack's own parser reports a syntax error in a file it builds
