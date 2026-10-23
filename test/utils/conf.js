@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import DiagnosticsPlugin from "../../src/index.js";
@@ -11,6 +13,9 @@ export default (entry, pluginConf = {}, webpackConf = {}) => {
   const eslint = {
     // Do not cache for tests
     cache: false,
+    // A test that turns a cache on starts from an empty one of its own, so
+    // that what one test linted is never answered for in another.
+    cacheLocation: join(tmpdir(), `diagnostics-test-${randomUUID()}`, "cache"),
     overrideConfigFile: join(testDir, "./config-for-tests/eslint.config.mjs"),
     // this disables the use of .eslintignore, since it contains the fixtures
     // folder to skip it on the global linting, but here we want the opposite

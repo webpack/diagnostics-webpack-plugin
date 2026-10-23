@@ -113,15 +113,22 @@ describe("reading across files", () => {
       output: { path: join(import.meta.dirname, "outputs") },
       plugins: [new DiagnosticsPlugin({ checks: [entry] })],
     });
-    let first = true;
+    let edits = 0;
+    const edit = () => {
+      calls.length = 0;
+      edits += 1;
+      writeFileSync(join(context, "leaf.js"), `module.exports = ${edits};\n`);
+    };
 
     watching = compiler.watch({}, (err) => {
       assert.strictEqual(err, null);
 
-      if (first) {
-        first = false;
-        calls.length = 0;
-        writeFileSync(join(context, "leaf.js"), "module.exports = 3;\n");
+      // A file written just before the watch started can have its time known
+      // to webpack only once it has, and the first rebuild then builds that
+      // module again too, as macOS does: what the second edit's rebuild lints
+      // is what an edit alone makes it lint.
+      if (edits < 2) {
+        edit();
 
         return;
       }

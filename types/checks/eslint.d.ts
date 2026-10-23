@@ -4,7 +4,6 @@ declare namespace _default {
   export let filesSource: string;
   export const schema: any;
   export namespace defaults {
-    let cache: boolean;
     let cacheLocation: string;
     let configType: string;
     let extensions: string;
@@ -40,6 +39,8 @@ export function getESLintOptions(options: Options): ESLintOptions;
  * @returns {Promise<CheckInstance>} eslint check
  */
 declare function create({
+  key,
+  id,
   options,
   compilation,
 }: CheckContext): Promise<CheckInstance>;

@@ -1,6 +1,8 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
+import { createHash } from "node:crypto";
+import { statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +17,16 @@ import { toPosixPath } from "./utils.js";
  * @property {string[]} resolved the files its imports resolve to
  * @property {boolean} unresolved whether a relative import resolved to nothing
  * @property {boolean} global whether it declares something every file can see
+ * @property {string[]} missing the relative imports that resolve to nothing, as written
+ */
+
+/**
+ * A file as it was last read, kept while its size and time are the same.
+ * @typedef {object} Read
+ * @property {number} mtimeMs when it was last written
+ * @property {number} size how long it is
+ * @property {string} hash what it holds, hashed
+ * @property {Imports} imports what it imports
  */
 
 /**
@@ -25,6 +37,8 @@ import { toPosixPath } from "./utils.js";
  * @property {Map<string, Imports>} files the imports of each file, by its path
  * @property {Map<string, string | undefined>} configs the config file nearest to each directory
  * @property {Map<string, EXPECTED_ANY>} options the compiler options of each config file
+ * @property {Map<string, Read>} reads every file read for a signature, as it was read
+ * @property {Map<string, string>} configHashes each config file and what it extends, hashed, as the signatures were last read under
  */
 
 // What the options of a directory no config file covers are taken as: what a
@@ -36,7 +50,14 @@ const FALLBACK_OPTIONS = { allowJs: true, moduleResolution: 100 };
  * @returns {Graph} an empty graph
  */
 function createGraph(ts) {
-  return { ts, files: new Map(), configs: new Map(), options: new Map() };
+  return {
+    ts,
+    files: new Map(),
+    configs: new Map(),
+    options: new Map(),
+    reads: new Map(),
+    configHashes: new Map(),
+  };
 }
 
 /**
@@ -76,14 +97,12 @@ function optionsFor(graph, file) {
 
 /**
  * @param {Graph} graph the graph
- * @param {string} file the file to read the imports of
- * @returns {Imports | undefined} what it imports, or nothing when it is gone
+ * @param {string} file the file the text is of
+ * @param {string} text what it holds
+ * @returns {Imports} what it imports
  */
-function readImports(graph, file) {
+function importsOf(graph, file, text) {
   const { ts } = graph;
-  const text = ts.sys.readFile(file);
-
-  if (text === undefined) return undefined;
 
   // Type-only imports included: they are what carries a type between files,
   // and what a bundler drops before webpack ever sees them.
@@ -91,7 +110,8 @@ function readImports(graph, file) {
   const options = optionsFor(graph, file);
   /** @type {string[]} */
   const resolved = [];
-  let unresolved = false;
+  /** @type {string[]} */
+  const missing = [];
 
   for (const { fileName } of info.importedFiles) {
     const found = ts.resolveModuleName(
@@ -102,7 +122,7 @@ function readImports(graph, file) {
     ).resolvedModule;
 
     if (found) resolved.push(toPosixPath(resolve(found.resolvedFileName)));
-    else if (fileName.startsWith(".")) unresolved = true;
+    else if (fileName.startsWith(".")) missing.push(fileName);
   }
 
   for (const { fileName } of info.referencedFiles) {
@@ -111,13 +131,25 @@ function readImports(graph, file) {
 
   return {
     resolved,
-    unresolved,
+    unresolved: missing.length > 0,
+    missing,
     // `declare global` and `declare module` reach files that never import the
     // one declaring them.
     global:
       info.ambientExternalModules !== undefined ||
       /\bdeclare\s+global\b/u.test(text),
   };
+}
+
+/**
+ * @param {Graph} graph the graph
+ * @param {string} file the file to read the imports of
+ * @returns {Imports | undefined} what it imports, or nothing when it is gone
+ */
+function readImports(graph, file) {
+  const text = graph.ts.sys.readFile(file);
+
+  return text === undefined ? undefined : importsOf(graph, file, text);
 }
 
 /**
@@ -249,4 +281,261 @@ function getGraph(compiler, context, owner) {
   return graph;
 }
 
-export { affectedFiles, createGraph, getGraph };
+/**
+ * @param {string} text what to hash
+ * @returns {string} its hash
+ */
+function hashOf(text) {
+  return createHash("sha1").update(text).digest("hex");
+}
+
+/**
+ * @param {string} file a resolved file
+ * @returns {boolean} whether a package rather than the project holds it
+ */
+function isPackage(file) {
+  return file.includes("/node_modules/");
+}
+
+/**
+ * A file as it is now, read again only when its size or time has changed —
+ * or when an import of it resolved to nothing, which a file written since can
+ * answer.
+ * @param {Graph} graph the graph
+ * @param {string} file the file, as a posix path
+ * @returns {Read | undefined} it, or nothing when it is not there
+ */
+function readNow(graph, file) {
+  let stat;
+
+  try {
+    stat = statSync(file);
+  } catch {
+    graph.reads.delete(file);
+
+    return undefined;
+  }
+
+  const known = graph.reads.get(file);
+
+  if (
+    known &&
+    known.mtimeMs === stat.mtimeMs &&
+    known.size === stat.size &&
+    !known.imports.unresolved
+  ) {
+    return known;
+  }
+
+  const text = graph.ts.sys.readFile(file);
+
+  if (text === undefined) return undefined;
+
+  /** @type {Read} */
+  const read = {
+    mtimeMs: stat.mtimeMs,
+    size: stat.size,
+    hash: hashOf(text),
+    imports: importsOf(graph, file, text),
+  };
+
+  graph.reads.set(file, read);
+
+  return read;
+}
+
+/**
+ * A config file as it is now: what it and the files it extends hold, hashed,
+ * and the files the program it describes holds — read again every time, since
+ * a file appearing under its `include` changes the second without the first.
+ * @param {Graph} graph the graph
+ * @param {string} config the config file
+ * @returns {{ hash: string, sources: string[] }} it now
+ */
+function readConfig(graph, config) {
+  const { ts } = graph;
+  const parsed = ts.getParsedCommandLineOfConfigFile(
+    config,
+    {},
+    { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} },
+  );
+  const extended =
+    (parsed &&
+      parsed.options.configFile &&
+      parsed.options.configFile.extendedSourceFiles) ||
+    [];
+  const text = [config, ...extended]
+    .map((file) => `${file} ${ts.sys.readFile(file) ?? "gone"}`)
+    .join("\n");
+
+  return { hash: hashOf(text), sources: parsed ? parsed.fileNames : [] };
+}
+
+/**
+ * What every file of a project answers to besides what it imports: the config
+ * files its imports resolve through, and the declaration files and global
+ * declarations of the programs they describe, which a file sees without
+ * importing them.
+ * @param {Graph} graph the graph
+ * @param {Map<string, { hash: string, sources: string[] }>} configs the config files as they are now
+ * @returns {string} what they hold, hashed
+ */
+function projectSignature(graph, configs) {
+  /** @type {string[]} */
+  const parts = [];
+
+  for (const [config, { hash, sources }] of configs) {
+    parts.push(`config ${config} ${hash}`);
+
+    for (const source of sources) {
+      const file = toPosixPath(resolve(source));
+
+      if (isPackage(file)) continue;
+
+      const known = readNow(graph, file);
+
+      if (!known) continue;
+
+      if (
+        file.endsWith(".json") ||
+        /\.d\.[cm]?ts$/u.test(file) ||
+        known.imports.global
+      ) {
+        parts.push(`global ${file} ${known.hash}`);
+      }
+    }
+  }
+
+  return hashOf(parts.toSorted().join("\n"));
+}
+
+/**
+ * What decides what a typed rule says of each file: the file, every file it
+ * imports however indirectly, and what the whole project sees — so that a
+ * result kept for a file is good for as long as this is the same, and no
+ * longer. A package is read for when it was installed rather than for what it
+ * holds.
+ * @param {Graph} graph the graph
+ * @param {string[]} files the files to answer for
+ * @returns {Map<string, string>} the signature of each of them that can be read, by its posix path
+ */
+function signatures(graph, files) {
+  const wanted = files.map((file) => toPosixPath(resolve(file)));
+
+  // Read first, so that the config files they resolve through are known.
+  for (const file of wanted) readNow(graph, file);
+
+  /** @type {Map<string, { hash: string, sources: string[] }>} */
+  let configs = new Map();
+
+  for (const config of graph.options.keys()) {
+    configs.set(config, readConfig(graph, config));
+  }
+
+  // A config file that changed decides how every import resolves, so what was
+  // read under it is read again, under it as it is now.
+  if (
+    [...configs].some(
+      ([config, { hash }]) => graph.configHashes.get(config) !== hash,
+    ) &&
+    graph.configHashes.size > 0
+  ) {
+    graph.reads.clear();
+    graph.options.clear();
+    graph.configs.clear();
+
+    for (const file of wanted) readNow(graph, file);
+
+    configs = new Map();
+
+    for (const config of graph.options.keys()) {
+      configs.set(config, readConfig(graph, config));
+    }
+  }
+
+  graph.configHashes.clear();
+
+  for (const [config, { hash }] of configs) {
+    graph.configHashes.set(config, hash);
+  }
+
+  const project = projectSignature(graph, configs);
+  /**
+   * What each file says of itself, and what it imports, read once however
+   * many of the closures reach it.
+   * @type {Map<string, { parts: string[], imports: string[] }>}
+   */
+  const known = new Map();
+  /**
+   * @param {string} file the file, as a posix path
+   * @returns {{ parts: string[], imports: string[] }} what it says of itself, and what it imports
+   */
+  const describe = (file) => {
+    let described = known.get(file);
+
+    if (described) return described;
+
+    if (isPackage(file)) {
+      let stat;
+
+      try {
+        stat = statSync(file);
+      } catch {
+        // Gone, which is what is said of it.
+      }
+
+      described = {
+        parts: [`${file} ${stat ? `${stat.mtimeMs} ${stat.size}` : "gone"}`],
+        imports: [],
+      };
+    } else {
+      const read = readNow(graph, file);
+
+      described = read
+        ? {
+            parts: [
+              `${file} ${read.hash}`,
+              ...read.imports.missing.map(
+                (specifier) => `${file} misses ${specifier}`,
+              ),
+            ],
+            imports: read.imports.resolved,
+          }
+        : { parts: [`${file} gone`], imports: [] };
+    }
+
+    known.set(file, described);
+
+    return described;
+  };
+  /** @type {Map<string, string>} */
+  const found = new Map();
+
+  for (const file of wanted) {
+    if (!graph.reads.has(file)) continue;
+
+    /** @type {string[]} */
+    const parts = [];
+    const seen = new Set([file]);
+    const queue = [file];
+
+    for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
+      const described = describe(next);
+
+      parts.push(...described.parts);
+
+      for (const target of described.imports) {
+        if (!seen.has(target)) {
+          seen.add(target);
+          queue.push(target);
+        }
+      }
+    }
+
+    found.set(file, hashOf(`${project}\n${parts.toSorted().join("\n")}`));
+  }
+
+  return found;
+}
+
+export { affectedFiles, createGraph, getGraph, hashOf, signatures };

@@ -5,8 +5,10 @@ import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { getGraph, hashOf, signatures } from "../import-graph.js";
+import { openStore, saveStore } from "../result-store.js";
 import { countThreads, createPool } from "../threads.js";
-import { omitPluginOptions } from "../utils.js";
+import { omitPluginOptions, toPosixPath } from "../utils.js";
 
 import { loadESLintClass } from "./eslint-worker.js";
 
@@ -218,10 +220,70 @@ async function readsAcrossFiles(eslint, file) {
 }
 
 /**
+ * Where the results of typed linting are kept between builds: next to ESLint's
+ * own cache, which typed linting cannot use.
+ * @param {ESLintOptions} eslintOptions the options ESLint is given
+ * @returns {string} the file they are written to
+ */
+function resultsPathFor(eslintOptions) {
+  const location = String(eslintOptions.cacheLocation || ".eslintcache");
+  const path = resolve(eslintOptions.cwd || process.cwd(), location);
+
+  // A location ending in a separator is a directory, as ESLint reads it.
+  return /[\\/]$/u.test(location)
+    ? join(path, ".typed-results.json")
+    : `${path}.typed-results.json`;
+}
+
+/**
+ * A config as text that is the same for the same config from one build to the
+ * next: keys in order, plugins' functions by name, and what refers back to
+ * itself — a plugin listing its own configs — said once.
+ * @param {unknown} value what to write
+ * @param {Set<unknown>=} open the objects being written, to tell a cycle by
+ * @returns {string} it as text
+ */
+function stableStringify(value, open = new Set()) {
+  if (typeof value === "function") return `"function ${value.name}"`;
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (value instanceof RegExp) return JSON.stringify(String(value));
+  if (open.has(value)) return '"[circular]"';
+
+  open.add(value);
+
+  const text = Array.isArray(value)
+    ? `[${value.map((item) => stableStringify(item, open)).join(",")}]`
+    : `{${Object.keys(value)
+        .toSorted()
+        .map(
+          (key) =>
+            `${JSON.stringify(key)}:${stableStringify(
+              /** @type {Record<string, unknown>} */ (value)[key],
+              open,
+            )}`,
+        )
+        .join(",")}}`;
+
+  open.delete(value);
+
+  return text;
+}
+
+/**
+ * @param {LintResult} result what ESLint found in a file
+ * @returns {boolean} whether `fix` has something left to do in it
+ */
+function isFixable(result) {
+  return result.fixableErrorCount + result.fixableWarningCount > 0;
+}
+
+/**
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} eslint check
  */
-async function create({ options, compilation }) {
+async function create({ key, id, options, compilation }) {
   const eslintOptions = getESLintOptions(options);
   const fix = Boolean(eslintOptions.fix);
   const specifier = options.eslintPath || "eslint";
@@ -274,6 +336,8 @@ async function create({ options, compilation }) {
 
   if (cacheIsOurs) eslintOptions.cache = true;
 
+  const cacheWanted = cacheIsOurs || eslintOptions.cache === true;
+
   let eslint = new ESLint(eslintOptions);
   const { compiler } = compilation;
   /**
@@ -281,6 +345,12 @@ async function create({ options, compilation }) {
    * @type {boolean | undefined}
    */
   let across;
+  /**
+   * Under typed linting, where ESLint's own cache cannot answer: the import
+   * graph each file's results are kept against, and where they are kept.
+   * @type {{ graph: import("../import-graph.js").Graph, store: import("../result-store.js").Store } | undefined}
+   */
+  let remembered;
 
   /**
    * @param {string[]} files the files about to be linted
@@ -303,9 +373,25 @@ async function create({ options, compilation }) {
 
     // A cache keyed on one file's own contents cannot answer for a rule that
     // read another, so what it holds would be reported long after it is wrong.
-    // One asked for in the configuration is kept: that is a trade of results
-    // for speed the configuration made, as `eslint-webpack-plugin` makes it.
-    if (cacheIsOurs) {
+    // Results are kept instead against everything a file imports, however
+    // indirectly, which is what the rule read.
+    const graph = cacheWanted
+      ? await getGraph(
+          compiler,
+          String(options.context),
+          `${key}\0${id}\0results`,
+        )
+      : undefined;
+
+    if (graph) {
+      remembered = { graph, store: openStore(resultsPathFor(eslintOptions)) };
+      eslintOptions.cache = false;
+      changed = true;
+    } else if (cacheIsOurs) {
+      // Without a TypeScript to read imports with, nothing can say which
+      // results still hold. One asked for in the configuration is kept: that
+      // is a trade of results for speed the configuration made, as
+      // `eslint-webpack-plugin` makes it.
       eslintOptions.cache = false;
       changed = true;
     }
@@ -349,9 +435,106 @@ async function create({ options, compilation }) {
     return pool !== null;
   };
 
+  /** @type {WeakMap<EXPECTED_ANY, string>} */
+  const configHashes = new WeakMap();
+
+  /**
+   * @param {string} file a file to lint
+   * @returns {Promise<string>} the config ESLint lints it under, hashed
+   */
+  const configHashOf = async (file) => {
+    const config = await eslint.calculateConfigForFile(file);
+
+    if (config === null || typeof config !== "object") {
+      return hashOf(String(config));
+    }
+
+    let hash = configHashes.get(config);
+
+    if (hash === undefined) {
+      hash = hashOf(stableStringify(config));
+      configHashes.set(config, hash);
+    }
+
+    return hash;
+  };
+
+  /**
+   * Answers for what was linted before under the same everything from what
+   * was found then, and lints the rest.
+   * @param {NonNullable<typeof remembered>} kept the graph and the store
+   * @param {string[]} files the files to lint
+   * @returns {Promise<{ found: LintResult[], linted: LintResult[] }>} every result, and the ones linted now
+   */
+  const lintRemembered = async ({ graph, store }, files) => {
+    const signed = signatures(graph, files);
+    /** @type {Map<string, string>} */
+    const keys = new Map();
+    /** @type {LintResult[]} */
+    const found = [];
+    /** @type {string[]} */
+    const pending = [];
+
+    for (const file of files) {
+      const known = toPosixPath(resolve(file));
+      const signature = signed.get(known);
+
+      if (!signature) {
+        pending.push(file);
+        continue;
+      }
+
+      const entryKey = hashOf(
+        `${ESLint.version}\0${await configHashOf(file)}\0${signature}`,
+      );
+      const entry = store.entries.get(known);
+
+      keys.set(known, entryKey);
+
+      if (
+        entry &&
+        entry.key === entryKey &&
+        !(fix && isFixable(entry.result))
+      ) {
+        found.push(entry.result);
+      } else {
+        pending.push(file);
+      }
+    }
+
+    const linted =
+      pending.length > 0
+        ? /** @type {LintResult[]} */ (await eslint.lintFiles(pending))
+        : [];
+
+    for (const result of linted) {
+      const known = toPosixPath(resolve(result.filePath));
+      const entryKey = keys.get(known);
+
+      if (entryKey === undefined) continue;
+
+      // What a fix wrote is in the file now, and the source is read again
+      // whenever it is wanted.
+      const { output, source, ...kept } = result;
+
+      store.entries.set(known, { key: entryKey, result: kept });
+      store.dirty = true;
+    }
+
+    return { found: [...found, ...linted], linted };
+  };
+
   return {
     async lintFiles(files) {
       await readConfig(files);
+
+      if (remembered) {
+        const { found, linted } = await lintRemembered(remembered, files);
+
+        if (fix) await ESLint.outputFixes(linted);
+
+        return found;
+      }
 
       const results = /** @type {LintResult[]} */ (
         spread(files)
@@ -436,6 +619,8 @@ async function create({ options, compilation }) {
         loaded.format(/** @type {LintResult[]} */ (results));
     },
     async cleanup() {
+      if (remembered) saveStore(remembered.store);
+
       if (pool) {
         await pool.end();
         pool = null;

@@ -256,7 +256,7 @@ type cache = boolean;
 
 The cache is enabled by default to decrease execution time.
 
-An ESLint check doing [typed linting](#eslint) turns it off unless `cache: true` is written down: a cache keyed on one file's own contents cannot answer for a rule that read another, so a file whose import changed would be reported from before the change. Writing it down takes that trade for speed, as `eslint-webpack-plugin` does — a rebuild then answers every file but the changed ones from the cache, and whatever else an edit breaks goes unreported until those files change too.
+An ESLint check doing [typed linting](#eslint) keeps its results in a cache of its own instead of ESLint's: a cache keyed on one file's own contents cannot answer for a rule that read another, so a file whose import changed would be reported from before the change. Each result is kept against the file and everything it imports, however indirectly, together with the TypeScript config, global declarations and the ESLint config it was linted under, and a later build — a watch rebuild or a fresh `webpack` run — reuses it while all of that is the same. It is written next to [`cacheLocation`](#cachelocation), as `<cacheLocation>.typed-results.json`. With `cache: false`, every build lints every file.
 
 #### `cacheLocation`
 
@@ -412,7 +412,9 @@ Which file imports which is read with the project's own TypeScript, through the
 drops it before webpack sees it — and this holds for every check, whatever tool
 it runs. A change that could reach files some other way — a declaration file
 nothing imports, a `declare global`, a config file, an import that resolves to
-nothing — lints every file again, as does a project without TypeScript.
+nothing — lints every file again, as does a project without TypeScript. There,
+an ESLint check with `cache: true` written down keeps ESLint's own cache, which
+answers for a file whose import changed from before the change.
 
 Left out, each check reads it from its tool's configuration:
 
@@ -647,7 +649,7 @@ Alongside the shared options you can pass any [ESLint Node.js API option](https:
 
 A rebuild lints only the files webpack rebuilt and reports the rest from the previous run, so [`lintOnStart`](#lintonstart) is only worth setting to start a watch run quiet.
 
-**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints the files that changed and every file importing one of them, however indirectly — see [`readsAcrossFiles`](#readsacrossfiles) — and ESLint's own [`cache`](#cache) is turned off for it, since that cache is keyed on each file's own contents and would answer for a type it never read. Over three hundred modules, an edit near the bottom of the import tree took a rebuild from 2.0 s to 0.35 s, and one halfway up to 1.2 s.
+**Typed linting is the exception, and it is read from your configuration rather than asked of you.** Where `parserOptions.project` or `parserOptions.projectService` is set, what a rule reports of one file can turn on another — a type it imported, a declaration file something regenerated — so a file that did not itself change is not one whose last result still holds. A rebuild then lints the files that changed and every file importing one of them, however indirectly — see [`readsAcrossFiles`](#readsacrossfiles) — and ESLint's own [`cache`](#cache) gives way to one keyed on everything a file imports, since ESLint's is keyed on each file's own contents and would answer for a type it never read. Over three hundred modules, an edit near the bottom of the import tree took a rebuild from 2.0 s to 0.35 s, and one halfway up to 1.2 s. Across separate runs, a thousand-file project that took 10 s every time now takes 4 s once nothing it imports has changed, as fast as `eslint-webpack-plugin`'s cache that can go stale.
 
 ### `configType`
 
