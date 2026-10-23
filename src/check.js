@@ -23,6 +23,7 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {Dependencies & { errors?: DiagnosticError, warnings?: DiagnosticError, outputReport?: OutputReportContent }} Report */
 /** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report>, detach: (report: Promise<Report>) => void }} Runner */
 /** @typedef {Map<string, CheckResult | undefined>} ResultStore */
+/** @typedef {{ key: string, run: Promise<Run>, joined: boolean }} SharedRun */
 
 /** @type {WeakMap<Compilation["compiler"], Map<string, ResultStore>>} */
 const resultStores = new WeakMap();
@@ -32,8 +33,10 @@ const detachedReports = new WeakMap();
 
 // A run of a check that is still going, so that two compilers over the same
 // files drive the tool once. It is kept only while it runs: what comes after
-// belongs to the store of the compiler that made it.
-/** @type {Map<string, Promise<Run>>} */
+// belongs to the store of the compiler that made it. A run another compiler
+// joined is one that compiler waits for too, so it is never stopped, and a run
+// that is stopped is no longer there to join.
+/** @type {Map<string, SharedRun>} */
 const sharedRuns = new Map();
 
 // What only decides which files are checked, or how what is found is reported.
@@ -255,6 +258,9 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
   const linted = new Set();
   // A check that cannot lint fails the same way for every batch it is given.
   let failed = false;
+  // The runs this one started that another compiler could join.
+  /** @type {SharedRun[]} */
+  const runs = [];
 
   /**
    * What the check answers with, and what it says it read to answer — taken
@@ -268,7 +274,11 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
     const key = sharing && `${sharing}\0${files.toSorted().join("\0")}`;
     const running = key ? sharedRuns.get(key) : undefined;
 
-    if (running) return running;
+    if (running) {
+      running.joined = true;
+
+      return running.run;
+    }
 
     const started = instance.lintFiles(files).then((results) => ({
       results,
@@ -280,8 +290,10 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
 
     if (key) {
       const forget = () => sharedRuns.delete(key);
+      const shared = { key, run: started, joined: false };
 
-      sharedRuns.set(key, started);
+      sharedRuns.set(key, shared);
+      runs.push(shared);
       started.then(forget, forget);
     }
 
@@ -509,6 +521,14 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
         () => {},
       ),
       cancel: () => {
+        if (runs.some((shared) => shared.joined)) return;
+
+        for (const shared of runs) {
+          if (sharedRuns.get(shared.key) === shared) {
+            sharedRuns.delete(shared.key);
+          }
+        }
+
         pending.then((instance) => {
           if (instance && instance.cancel) instance.cancel();
         });
