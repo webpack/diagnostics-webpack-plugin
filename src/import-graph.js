@@ -39,6 +39,7 @@ import { toPosixPath } from "./utils.js";
  * @property {Map<string, EXPECTED_ANY>} options the compiler options of each config file
  * @property {Map<string, Read>} reads every file read for a signature, as it was read
  * @property {Map<string, string>} configHashes each config file and what it extends, hashed, as the signatures were last read under
+ * @property {Map<EXPECTED_ANY, EXPECTED_ANY>} resolutions what each set of compiler options resolved this pass, so that every file in a folder does not look its imports up again
  */
 
 // What the options of a directory no config file covers are taken as: what a
@@ -57,6 +58,7 @@ function createGraph(ts) {
     options: new Map(),
     reads: new Map(),
     configHashes: new Map(),
+    resolutions: new Map(),
   };
 }
 
@@ -96,6 +98,32 @@ function optionsFor(graph, file) {
 }
 
 /**
+ * What the files of one set of compiler options resolved this pass. Kept for
+ * no longer than a pass: a file written since can make an import that resolved
+ * to nothing resolve, which an answer kept from before would hide.
+ * @param {Graph} graph the graph
+ * @param {EXPECTED_ANY} options the compiler options the imports are resolved under
+ * @returns {EXPECTED_ANY} the cache TypeScript resolves them through
+ */
+function resolutionsFor(graph, options) {
+  let cache = graph.resolutions.get(options);
+
+  if (!cache) {
+    const { ts } = graph;
+
+    cache = ts.createModuleResolutionCache(
+      ts.sys.getCurrentDirectory(),
+      (/** @type {string} */ name) =>
+        ts.sys.useCaseSensitiveFileNames ? name : name.toLowerCase(),
+      options,
+    );
+    graph.resolutions.set(options, cache);
+  }
+
+  return cache;
+}
+
+/**
  * @param {Graph} graph the graph
  * @param {string} file the file the text is of
  * @param {string} text what it holds
@@ -119,6 +147,7 @@ function importsOf(graph, file, text) {
       file,
       options,
       ts.sys,
+      resolutionsFor(graph, options),
     ).resolvedModule;
 
     if (found) resolved.push(toPosixPath(resolve(found.resolvedFileName)));
@@ -163,6 +192,8 @@ function readImports(graph, file) {
  * @returns {Set<string> | undefined} the files to lint again, as posix paths, or nothing when every file has to be
  */
 function affectedFiles(graph, files, changed) {
+  graph.resolutions.clear();
+
   const covered = new Set(files.map((file) => toPosixPath(resolve(file))));
   const touched = changed.map((file) => toPosixPath(resolve(file)));
 
@@ -420,6 +451,8 @@ function projectSignature(graph, configs) {
  * @returns {Map<string, string>} the signature of each of them that can be read, by its posix path
  */
 function signatures(graph, files) {
+  graph.resolutions.clear();
+
   const wanted = files.map((file) => toPosixPath(resolve(file)));
 
   // Read first, so that the config files they resolve through are known.

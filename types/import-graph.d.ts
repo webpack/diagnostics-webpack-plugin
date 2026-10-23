@@ -71,6 +71,10 @@ export type Graph = {
    * each config file and what it extends, hashed, as the signatures were last read under
    */
   configHashes: Map<string, string>;
+  /**
+   * what each set of compiler options resolved this pass, so that every file in a folder does not look its imports up again
+   */
+  resolutions: Map<EXPECTED_ANY, EXPECTED_ANY>;
 };
 /**
  * Which files a change can have changed what typed linting says of: the ones
