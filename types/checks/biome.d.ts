@@ -61,3 +61,12 @@ export type Diagnostic = {
  * @returns {Promise<CheckInstance>} biome check
  */
 declare function create({ options }: CheckContext): Promise<CheckInstance>;
+/**
+ * The binary Biome's launcher would run, found as the launcher finds it: what
+ * `BIOME_BINARY` names, or the build published for this platform beside the
+ * package. The launcher is a Node process of its own on every run, for nothing
+ * but to start this one.
+ * @param {string} script the launcher
+ * @returns {string | undefined} the binary, or nothing where none is found
+ */
+export function findNative(script: string): string | undefined;

@@ -35,16 +35,17 @@ function findBinary(specifier, binary) {
  * Runs a tool and reads the JSON it answers with on stdout. A tool that found
  * something answers non-zero, which is not a failure to run; an empty answer
  * with one is.
- * @param {string} script the entry to run
+ * @param {string} script the entry to run, a script Node runs or a binary
  * @param {string[]} args what to run it with
  * @param {string} cwd where to run it
+ * @param {boolean=} native whether the entry is a binary run on its own
  * @returns {Promise<EXPECTED_ANY>} what it answered
  */
-function runJson(script, args, cwd) {
+function runJson(script, args, cwd, native = false) {
   return new Promise((promiseResolve, reject) => {
     execFile(
-      process.execPath,
-      [script, ...args],
+      native ? script : process.execPath,
+      native ? args : [script, ...args],
       { cwd, maxBuffer: OUTPUT_LIMIT },
       (error, stdout) => {
         if (!stdout && error) {

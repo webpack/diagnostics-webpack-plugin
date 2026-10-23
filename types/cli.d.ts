@@ -53,15 +53,17 @@ export function groupByFile<T>(
  * Runs a tool and reads the JSON it answers with on stdout. A tool that found
  * something answers non-zero, which is not a failure to run; an empty answer
  * with one is.
- * @param {string} script the entry to run
+ * @param {string} script the entry to run, a script Node runs or a binary
  * @param {string[]} args what to run it with
  * @param {string} cwd where to run it
+ * @param {boolean=} native whether the entry is a binary run on its own
  * @returns {Promise<EXPECTED_ANY>} what it answered
  */
 export function runJson(
   script: string,
   args: string[],
   cwd: string,
+  native?: boolean | undefined,
 ): Promise<EXPECTED_ANY>;
 /**
  * Splits a file's diagnostics by the severity the tool gave them, so that

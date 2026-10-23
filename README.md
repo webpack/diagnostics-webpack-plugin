@@ -772,6 +772,10 @@ new DiagnosticsPlugin({ checks: ["biome"] });
 Like the oxlint check this runs a binary and reads the JSON it answers with,
 which Biome calls an experimental reporter — a release of its own may move the
 shape, and it is the only reporter carrying the severities this check needs.
+The binary is the one published for the platform beside `@biomejs/biome`, or
+what `BIOME_BINARY` names, as Biome's own launcher finds it — run directly
+rather than through that launcher, which is a Node process of its own on every
+run for nothing but to start it.
 
 Biome's project and types rules — `noImportCycles`, `noFloatingPromises` —
 answer for a file from the files it imports, and which rules those are is not

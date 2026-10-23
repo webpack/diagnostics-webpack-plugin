@@ -67,6 +67,75 @@ function formatDiagnostic(filename, diagnostic) {
   return `${filename}${at}  ${diagnostic.severity}  ${diagnostic.message}${rule}`;
 }
 
+/** @type {Map<string, string | undefined>} */
+const natives = new Map();
+
+// Where each platform's build of Biome is published, as Biome's own launcher
+// names them.
+/** @type {Record<string, Record<string, string>>} */
+const PLATFORMS = {
+  win32: {
+    x64: "@biomejs/cli-win32-x64/biome.exe",
+    arm64: "@biomejs/cli-win32-arm64/biome.exe",
+  },
+  darwin: {
+    x64: "@biomejs/cli-darwin-x64/biome",
+    arm64: "@biomejs/cli-darwin-arm64/biome",
+  },
+  linux: {
+    x64: "@biomejs/cli-linux-x64/biome",
+    arm64: "@biomejs/cli-linux-arm64/biome",
+  },
+  "linux-musl": {
+    x64: "@biomejs/cli-linux-x64-musl/biome",
+    arm64: "@biomejs/cli-linux-arm64-musl/biome",
+  },
+};
+
+/**
+ * @param {string} script the launcher
+ * @returns {string | undefined} the binary published for this platform beside it
+ */
+function lookUpNative(script) {
+  // Node built against glibc says which one; on musl it says nothing.
+  const { header } = /** @type {EXPECTED_ANY} */ (process.report.getReport());
+  const platform =
+    process.platform === "linux" && !header.glibcVersionRuntime
+      ? "linux-musl"
+      : process.platform;
+  const published = PLATFORMS[platform] && PLATFORMS[platform][process.arch];
+
+  if (!published) return undefined;
+
+  try {
+    // Resolved from the launcher, whose optional dependency the build is.
+    return createRequire(script).resolve(published);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The binary Biome's launcher would run, found as the launcher finds it: what
+ * `BIOME_BINARY` names, or the build published for this platform beside the
+ * package. The launcher is a Node process of its own on every run, for nothing
+ * but to start this one.
+ * @param {string} script the launcher
+ * @returns {string | undefined} the binary, or nothing where none is found
+ */
+function findNative(script) {
+  if (process.env.BIOME_BINARY) return process.env.BIOME_BINARY;
+
+  // Asked by every compilation, and the answer is the machine's.
+  if (natives.has(script)) return natives.get(script);
+
+  const found = lookUpNative(script);
+
+  natives.set(script, found);
+
+  return found;
+}
+
 /**
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} biome check
@@ -76,6 +145,7 @@ async function create({ options }) {
     String(options.biomePath || "@biomejs/biome"),
     "biome",
   );
+  const native = findNative(script);
   const cwd = String(options.context);
   const flags = [
     String(options.command || "lint"),
@@ -96,9 +166,10 @@ async function create({ options }) {
 
       for (let i = 0; i < files.length; i += FILES_PER_RUN) {
         const answer = await runJson(
-          script,
+          native || script,
           [...flags, ...files.slice(i, i + FILES_PER_RUN)],
           cwd,
+          Boolean(native),
         );
 
         found.push(...(answer.diagnostics || []));
@@ -169,3 +240,5 @@ export default {
   // of those rules can write `readsAcrossFiles: false`.
   readsAcrossFiles: () => true,
 };
+
+export { findNative };
