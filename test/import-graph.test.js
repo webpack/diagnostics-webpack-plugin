@@ -1,11 +1,22 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
-import { affectedFiles, createGraph, getGraph } from "../src/import-graph.js";
+import {
+  affectedFiles,
+  createGraph,
+  getGraph,
+  signatures,
+} from "../src/import-graph.js";
 import { toPosixPath } from "../src/utils.js";
 
 const ts = createRequire(import.meta.url)("typescript");
@@ -193,5 +204,137 @@ describe("the graph a compiler keeps", () => {
     writeFileSync(join(broken, "index.js"), 'throw new Error("broken");\n');
 
     assert.strictEqual(await getGraph({}, project), undefined);
+  });
+});
+
+describe("signatures", () => {
+  let dir;
+  let graph;
+  const at = (name) => join(dir, name);
+  const names = ["leaf.ts", "middle.ts", "top.ts", "alone.ts"];
+  // A write in the same millisecond as the last one is still a write.
+  let tick = Date.now() - 60_000;
+  const write = (name, text) => {
+    writeFileSync(at(name), text);
+    tick += 1000;
+    utimesSync(at(name), new Date(tick), new Date(tick));
+  };
+  const sign = () => {
+    const found = signatures(graph, names.map(at));
+
+    return Object.fromEntries(
+      names.map((name) => [name, found.get(toPosixPath(at(name)))]),
+    );
+  };
+  const changed = (before, after) =>
+    names.filter((name) => before[name] !== after[name]);
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "signatures-"));
+    graph = createGraph(ts);
+    write("tsconfig.json", '{ "compilerOptions": { "strict": true } }');
+    write("leaf.ts", "export const leaf = 1;\n");
+    write(
+      "middle.ts",
+      'import { leaf } from "./leaf";\nexport const m = leaf;\n',
+    );
+    write("top.ts", 'import { m } from "./middle";\nexport const t = m;\n');
+    write("alone.ts", "export const alone = 1;\n");
+  });
+
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("should be the same while nothing changes", () => {
+    assert.deepStrictEqual(sign(), sign());
+  });
+
+  it("should change for every file importing a changed one, however indirectly", () => {
+    const before = sign();
+
+    write("leaf.ts", "export const leaf = 2;\n");
+
+    assert.deepStrictEqual(changed(before, sign()), [
+      "leaf.ts",
+      "middle.ts",
+      "top.ts",
+    ]);
+  });
+
+  it("should change for a file that changed, and nothing it imports", () => {
+    const before = sign();
+
+    write("top.ts", 'import { m } from "./middle";\nexport const t = 2;\n');
+
+    assert.deepStrictEqual(changed(before, sign()), ["top.ts"]);
+  });
+
+  it("should change for every file when the config file does", () => {
+    const before = sign();
+
+    write("tsconfig.json", '{ "compilerOptions": { "strict": false } }');
+
+    assert.deepStrictEqual(changed(before, sign()), names);
+  });
+
+  it("should change for every file when a declaration file appears or changes", () => {
+    const before = sign();
+
+    write("globals.d.ts", "declare const shared: number;\n");
+
+    const added = sign();
+
+    assert.deepStrictEqual(changed(before, added), names);
+
+    write("globals.d.ts", "declare const shared: string;\n");
+
+    assert.deepStrictEqual(changed(added, sign()), names);
+  });
+
+  it("should change for every file when one declares something global", () => {
+    const before = sign();
+
+    write(
+      "alone.ts",
+      "declare global { const g: number }\nexport const alone = 1;\n",
+    );
+
+    assert.deepStrictEqual(changed(before, sign()), names);
+  });
+
+  it("should follow where an import resolves once the config file moves it", () => {
+    mkdirSync(at("a"));
+    mkdirSync(at("b"));
+    write(
+      "tsconfig.json",
+      '{ "compilerOptions": { "baseUrl": ".", "paths": { "@x": ["a/x.ts"] } } }',
+    );
+    write("a/x.ts", "export const x = 1;\n");
+    write("b/x.ts", "export const x = 2;\n");
+    write("leaf.ts", 'import { x } from "@x";\nexport const leaf = x;\n');
+    sign();
+    write(
+      "tsconfig.json",
+      '{ "compilerOptions": { "baseUrl": ".", "paths": { "@x": ["b/x.ts"] } } }',
+    );
+
+    const moved = sign();
+
+    // Read under the config as it is now, `@x` is `b/x.ts`.
+    write("b/x.ts", "export const x = 3;\n");
+
+    assert.ok(changed(moved, sign()).includes("leaf.ts"));
+  });
+
+  it("should change once an import that resolved to nothing does", () => {
+    write(
+      "alone.ts",
+      'import { later } from "./later";\nexport const a = later;\n',
+    );
+
+    const before = sign();
+
+    write("later.ts", "export const later = 1;\n");
+
+    assert.ok(changed(before, sign()).includes("alone.ts"));
   });
 });

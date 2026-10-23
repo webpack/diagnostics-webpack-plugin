@@ -225,7 +225,7 @@ describe("incremental", () => {
     });
   });
 
-  it("should keep a cache written down where a rule reads other files", (t, done) => {
+  it("should keep results against what a file imports rather than in ESLint's cache where a rule reads other files", (t, done) => {
     writeFileSync(leaf, "const leaf = 1;\n");
     writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
     require(eslintPath)._reset();
@@ -236,8 +236,12 @@ describe("incremental", () => {
     watch = compiler.watch({}, (err) => {
       assert.strictEqual(err, null);
 
-      // Asked for, so the trade of results for speed is the configuration's.
-      assert.ok(require(eslintPath)._built.every((one) => one.cache === true));
+      const built = require(eslintPath)._built;
+
+      // ESLint's cache answers from a file's own contents alone, so the
+      // results are kept by the plugin instead, against what it imports.
+      assert.strictEqual(built[0].cache, true);
+      assert.strictEqual(built.at(-1).cache, false);
       done();
     });
   });

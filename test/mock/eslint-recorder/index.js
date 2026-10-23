@@ -12,7 +12,19 @@ class ESLintMock {
 
   async lintFiles(files) {
     calls.push(files);
-    return [];
+
+    // One result a file, finding nothing, as ESLint answers: what a check
+    // keeps between builds is kept by the file it came from.
+    return files.map((filePath) => ({
+      filePath,
+      messages: [],
+      suppressedMessages: [],
+      errorCount: 0,
+      fatalErrorCount: 0,
+      warningCount: 0,
+      fixableErrorCount: 0,
+      fixableWarningCount: 0,
+    }));
   }
 
   async calculateConfigForFile() {
