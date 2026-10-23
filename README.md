@@ -842,7 +842,8 @@ Not `--reporter`: the check asks for JSON and formats the results itself.
 
 ## TypeScript
 
-Run with `{ use: "typescript" }`, and requires `typescript >= 5`. It type checks
+Run with `{ use: "typescript" }`, and requires `typescript >= 5` (see
+[TypeScript 7](#typescript-7) for the native compiler). It type checks
 the program a `tsconfig.json` describes, so every file that config includes is
 checked whether or not webpack built it, and a type error in a module nothing
 imports yet is still reported. Emit is forced off: webpack writes the output.
@@ -892,6 +893,25 @@ new DiagnosticsPlugin({
   checks: [{ use: "typescript", skipLibCheck: true }],
 });
 ```
+
+### TypeScript 7
+
+TypeScript 7 is a native compiler with no compiler API in JavaScript, so the
+check talks to it through the API it ships instead (`typescript/unstable/async`).
+It runs in a process of its own, which takes the place of
+[`threads`](#threads), and is kept open while webpack watches: a rebuild tells it
+which files webpack saw change. What it prints is what `tsc --pretty` prints.
+
+It checks the project as its config file describes it, so [`build`](#build), a
+[`mode`](#mode) that writes, and compiler options written in the plugin are
+reported as unsupported rather than ignored. Write them in the config file
+instead.
+
+Over 600 files, a one-shot build with the check went from 3.5 s to 1.4–1.5 s
+next to TypeScript 6, and webpack's own process from 6.4 to 0.6–0.8 s of CPU and
+from 383 to 108 MB at its peak; the native compiler, checking the same project
+on its own, takes 1.5–1.7 s of CPU. A rebuild after an edit went from 1.0–2.5 s
+to 0.7–0.8 s.
 
 ### `typescriptPath`
 

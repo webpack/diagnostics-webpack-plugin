@@ -6,6 +6,12 @@ import { createRequire } from "node:module";
 import { countThreads, createSolo } from "../threads.js";
 import { importFrom } from "../utils.js";
 
+import {
+  checkNative,
+  loadNative,
+  startNative,
+  stopNative,
+} from "./typescript-native.js";
 import { check, describe, getHeld, getSchemas } from "./typescript-program.js";
 
 export { getTypeScriptOptions } from "./typescript-program.js";
@@ -16,6 +22,7 @@ export { getTypeScriptOptions } from "./typescript-program.js";
 /** @typedef {import("./index.js").FormatterOption} FormatterOption */
 /** @typedef {import("../options.js").CheckOptions} Options */
 /** @typedef {import("../threads.js").Solo} Solo */
+/** @typedef {import("./typescript-native.js").Native} Native */
 
 /** @typedef {EXPECTED_ANY} TypeScript */
 /** @typedef {EXPECTED_ANY} Diagnostic */
@@ -85,6 +92,127 @@ function getWorker(compiler, id, options) {
   return worker;
 }
 
+/** @type {WeakMap<EXPECTED_ANY, Map<string, Native>>} */
+const nativesByCompiler = new WeakMap();
+
+/** @type {Map<string, Promise<EXPECTED_ANY>>} */
+const natives = new Map();
+
+/**
+ * The client of the native compiler this check runs on, kept for the compiler
+ * it runs for so that the project it opened outlives one of its builds.
+ * @param {EXPECTED_ANY} compiler the compiler the check runs for
+ * @param {string} id a key unique to the check within that compiler
+ * @param {EXPECTED_ANY} loaded what `loadNative` loaded
+ * @param {Options} options the options the check was configured with
+ * @returns {Native} the client
+ */
+function getNative(compiler, id, loaded, options) {
+  let checks = nativesByCompiler.get(compiler);
+
+  if (!checks) {
+    checks = new Map();
+    nativesByCompiler.set(compiler, checks);
+  }
+
+  let native = checks.get(id);
+
+  if (!native) {
+    const started = startNative(loaded, options);
+
+    native = started;
+    checks.set(id, started);
+
+    // The compiler's process is the native compiler's too, so a watch closed
+    // without the compiler stops it as well, or it outlives the work.
+    const stop = async () => {
+      /** @type {Map<string, Native>} */ (checks).delete(id);
+
+      await stopNative(started);
+    };
+
+    compiler.hooks.shutdown.tapPromise("DiagnosticsPlugin", stop);
+    compiler.hooks.watchClose.tap("DiagnosticsPlugin", () => {
+      stop();
+    });
+  }
+
+  return native;
+}
+
+/**
+ * The check on TypeScript 7, whose compiler runs in a process of its own and
+ * answers with what it found already described.
+ * @param {CheckContext} context check context
+ * @param {string} id a key unique to the check within its compiler
+ * @param {EXPECTED_ANY} loaded what `loadNative` loaded
+ * @returns {CheckInstance} typescript check
+ */
+function createNative({ options, compilation }, id, loaded) {
+  const { compiler } = compilation;
+  const native = getNative(compiler, id, loaded, options);
+  /** @type {string[]} */
+  let read = [];
+  /** @type {string[]} */
+  let directories = [];
+  let checked = false;
+
+  return {
+    async lintFiles() {
+      if (checked) return [];
+
+      checked = true;
+
+      const found = await checkNative(native, options, compiler);
+
+      read = found.files;
+      directories = found.directories;
+
+      return found.diagnostics;
+    },
+    readFiles() {
+      return read;
+    },
+    readDirectories() {
+      return directories;
+    },
+    async getResults(results) {
+      return results;
+    },
+    filterResults(results, keep) {
+      return results.filter((one) => keep(one));
+    },
+    splitResults(results) {
+      return {
+        errors: results.filter((one) => one.severity === "error"),
+        warnings: results.filter((one) => one.severity !== "error"),
+      };
+    },
+    async getFormatter(formatter) {
+      if (typeof formatter === "function") {
+        return async (results) => String(await formatter(results));
+      }
+
+      return async (results) =>
+        /** @type {Described[]} */ (results)
+          .map((one) => one.formatted)
+          .join("")
+          .trim();
+    },
+    // A build that has no next one keeps no project, and a compiler left
+    // running would hold the process open after webpack is done with it.
+    async cleanup() {
+      if (compiler.watchMode) return;
+
+      const checks = nativesByCompiler.get(compiler);
+
+      if (checks) checks.delete(id);
+
+      await stopNative(native);
+    },
+  };
+}
+
 /**
  * Whether a run of this check can be handed to a worker. A `Diagnostic` holds
  * the source file it was found in, so a worker describes what it found rather
@@ -107,6 +235,20 @@ async function create({ key, id: entry, options, compilation }) {
   // The program is this entry's: another check of the same tool reads the same
   // config file under options of its own.
   const id = `${key}\0${entry}`;
+  const specifier = String(options.typescriptPath || "typescript");
+  let loading = natives.get(specifier);
+
+  if (!loading) {
+    loading = loadNative(specifier);
+    natives.set(specifier, loading);
+  }
+
+  const loaded = await loading;
+
+  if (loaded) {
+    return createNative({ key, id: entry, options, compilation }, id, loaded);
+  }
+
   const worker = canThread(options)
     ? getWorker(compilation.compiler, id, options)
     : null;

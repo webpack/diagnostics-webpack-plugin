@@ -18,6 +18,7 @@ export type Format = import("./index.js").Format;
 export type FormatterOption = import("./index.js").FormatterOption;
 export type Options = import("../options.js").CheckOptions;
 export type Solo = import("../threads.js").Solo;
+export type Native = import("./typescript-native.js").Native;
 export type TypeScript = EXPECTED_ANY;
 export type Diagnostic = EXPECTED_ANY;
 /**
