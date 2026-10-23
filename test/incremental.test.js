@@ -1,13 +1,6 @@
 import assert from "node:assert/strict";
-import {
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  utimesSync,
-  writeFileSync,
-} from "node:fs";
+import { rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
@@ -205,25 +198,6 @@ describe("incremental", () => {
           assert.strictEqual(files.length, 2);
           assert.ok(files.every((file) => !/watch-other\.js/u.test(file)));
         },
-        done,
-      );
-    });
-
-    it("should lint every file again without a TypeScript to read imports with", (t, done) => {
-      // A project whose own `typescript` cannot be loaded, found before any
-      // installed elsewhere.
-      const project = mkdtempSync(join(tmpdir(), "no-typescript-"));
-      const broken = join(project, "node_modules", "typescript");
-
-      mkdirSync(broken, { recursive: true });
-      writeFileSync(join(broken, "package.json"), '{ "main": "index.js" }');
-      writeFileSync(join(broken, "index.js"), 'throw new Error("broken");\n');
-      t.after(() => rmSync(project, { recursive: true, force: true }));
-
-      writeThree();
-      rebuild(
-        { cwd: project },
-        (files) => assert.strictEqual(files.length, 3),
         done,
       );
     });

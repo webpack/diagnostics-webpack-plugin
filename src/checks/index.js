@@ -57,8 +57,8 @@ import typescript from "./typescript.js";
  * @property {{ properties: { [key: string]: EXPECTED_ANY } }=} schema JSON schema of the options only this check understands
  * @property {{ [key: string]: EXPECTED_ANY }=} defaults default options for this check
  * @property {((compiler: Compiler) => string | string[])=} defaultExclude the globs excluded when the user specifies none
- * @property {((compiler: Compiler) => boolean)=} readsAcrossFiles whether what the check reports of one file can turn on another, so that a rebuild lints every file it covers rather than keeping what it said of the ones that did not change
- * @property {((compiler: Compiler, files: string[], changed: string[]) => Promise<Set<string> | undefined>)=} affectedFiles of a check that reads across files, the ones a change can have changed the results of, as posix paths, so that a rebuild lints those rather than every file; nothing means every file
+ * @property {((compiler: Compiler, options: CheckOptions) => boolean)=} readsAcrossFiles whether what the check reports of one file can turn on another, so that a rebuild lints again every file a change reaches rather than keeping what it said of the ones that did not change; `readsAcrossFiles` written in the options answers instead
+ * @property {((compiler: Compiler, files: string[], changed: string[]) => Promise<Set<string> | undefined>)=} affectedFiles of a check that reads across files, the ones a change can have changed the results of, as posix paths; left out, the plugin answers from the import graph it keeps for every such check, and nothing means every file
  */
 
 /**
@@ -71,8 +71,8 @@ import typescript from "./typescript.js";
  * @property {(compiler: Compiler) => string | string[]} defaultExclude the globs excluded when the user specifies none
  * @property {(context: CheckContext) => Promise<CheckInstance>} create creates a check for one compilation
  * @property {((result: CheckResult) => string | undefined)=} resultPath the file a result came from, without which a rebuild re-lints everything
- * @property {((compiler: Compiler) => boolean)=} readsAcrossFiles whether what the check reports of one file can turn on another, so that a rebuild lints every file it covers rather than keeping what it said of the ones that did not change
- * @property {((compiler: Compiler, files: string[], changed: string[]) => Promise<Set<string> | undefined>)=} affectedFiles of a check that reads across files, the ones a change can have changed the results of, as posix paths, so that a rebuild lints those rather than every file; nothing means every file
+ * @property {((compiler: Compiler, options: CheckOptions) => boolean)=} readsAcrossFiles whether what the check reports of one file can turn on another, so that a rebuild lints again every file a change reaches rather than keeping what it said of the ones that did not change; `readsAcrossFiles` written in the options answers instead
+ * @property {((compiler: Compiler, files: string[], changed: string[]) => Promise<Set<string> | undefined>)=} affectedFiles of a check that reads across files, the ones a change can have changed the results of, as posix paths; left out, the plugin answers from the import graph it keeps for every such check, and nothing means every file
  */
 
 /** @type {Map<string, CheckAdapter>} */

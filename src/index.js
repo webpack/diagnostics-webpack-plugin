@@ -6,6 +6,10 @@ import { glob } from "tinyglobby";
 
 import DiagnosticError from "./DiagnosticError.js";
 import createCheckRunner from "./check.js";
+import {
+  affectedFiles as affectedFromGraph,
+  getGraph,
+} from "./import-graph.js";
 import { getOptions, reportedAs, validateOptions } from "./options.js";
 import {
   arrify,
@@ -86,8 +90,31 @@ function changedFiles(compiler) {
 }
 
 /**
+ * Whether what a check reports of one file can turn on another — a type it
+ * imported, a cycle through it — so that a rebuild cannot report a file it did
+ * not lint again from its last run. Written down, `readsAcrossFiles` answers
+ * for any check; otherwise its adapter reads it from the tool's configuration.
+ * @param {Compiler} compiler compiler
+ * @param {ResolvedCheck} check the check to answer for
+ * @returns {boolean} whether one file's results can depend on another
+ */
+function readsAcrossFiles(compiler, check) {
+  const written = check.options.readsAcrossFiles;
+
+  if (typeof written === "boolean") return written;
+
+  return Boolean(
+    check.adapter.readsAcrossFiles &&
+    check.adapter.readsAcrossFiles(compiler, check.options),
+  );
+}
+
+/**
  * Of the files a check that reads across files did not see change, the ones a
- * change can still have changed what it says of — when its adapter can tell.
+ * change can still have changed what it says of: those that changed and every
+ * file importing one of them, however indirectly. Any check is answered from
+ * the import graph the plugin keeps, unless its adapter has an answer of its
+ * own.
  * @param {Compiler} compiler compiler
  * @param {ResolvedCheck} check the check to answer for
  * @param {string[]} files every file the check covers
@@ -96,10 +123,20 @@ function changedFiles(compiler) {
 async function affectedFiles(compiler, check, files) {
   const changed = changedFiles(compiler);
 
-  if (!changed || !check.adapter.affectedFiles) return undefined;
+  if (!changed) return undefined;
 
   try {
-    return await check.adapter.affectedFiles(compiler, files, changed);
+    if (check.adapter.affectedFiles) {
+      return await check.adapter.affectedFiles(compiler, files, changed);
+    }
+
+    const graph = await getGraph(
+      compiler,
+      String(check.options.context),
+      check.id,
+    );
+
+    return graph && affectedFromGraph(graph, files, changed);
   } catch {
     // Not knowing is answered by linting every file, as before.
     return undefined;
@@ -130,7 +167,7 @@ async function collectFromFileSystem(compiler, check) {
   // One that reads other files to answer for one is given every file a change
   // can reach: what it said of the others was true of the files as they were,
   // and still is of the ones nothing changed is imported by.
-  if (adapter.readsAcrossFiles && adapter.readsAcrossFiles(compiler)) {
+  if (readsAcrossFiles(compiler, check)) {
     const affected = await affectedFiles(compiler, check, found);
 
     if (!affected) return { lint: found, keep: [] };
@@ -529,10 +566,7 @@ class DiagnosticsWebpackPlugin {
               if (rebuilt) {
                 check.pending.push(file);
                 check.flush();
-              } else if (
-                check.adapter.readsAcrossFiles &&
-                check.adapter.readsAcrossFiles(compiler)
-              ) {
+              } else if (readsAcrossFiles(compiler, check)) {
                 check.deferred.push(file);
               } else {
                 check.kept.push(file);
