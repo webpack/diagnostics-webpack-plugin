@@ -260,6 +260,36 @@ describe("signatures", () => {
     ]);
   });
 
+  it("should change for every file importing one that has gone", () => {
+    const before = sign();
+
+    rmSync(at("leaf.ts"));
+
+    const after = sign();
+
+    assert.notStrictEqual(after["middle.ts"], before["middle.ts"]);
+    assert.notStrictEqual(after["top.ts"], before["top.ts"]);
+    assert.strictEqual(after["alone.ts"], before["alone.ts"]);
+  });
+
+  it("should change for a file importing a package once the package changes", () => {
+    mkdirSync(at("node_modules/pkg"), { recursive: true });
+    write(
+      "node_modules/pkg/package.json",
+      '{ "name": "pkg", "types": "index.d.ts" }',
+    );
+    write("node_modules/pkg/index.d.ts", "export declare const p: number;\n");
+    write("alone.ts", 'import { p } from "pkg";\nexport const alone = p;\n');
+
+    const before = sign();
+
+    assert.deepStrictEqual(changed(before, sign()), []);
+
+    write("node_modules/pkg/index.d.ts", "export declare const p: string;\n");
+
+    assert.deepStrictEqual(changed(before, sign()), ["alone.ts"]);
+  });
+
   it("should change for a file that changed, and nothing it imports", () => {
     const before = sign();
 

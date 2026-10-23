@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 
@@ -49,24 +50,29 @@ describe("typed linting between builds", () => {
   /**
    * One build, as a CI run or `webpack` on the command line makes it.
    * @param {object=} options what the check is configured with
+   * @param {{ context?: string, fixable?: number }=} setup where it is built, and whether ESLint finds what `fix` can write
    * @returns {Promise<string[]>} what it linted, by name
    */
-  const build = async (options = {}) => {
+  const build = async (
+    options = {},
+    { context = project, fixable = 0 } = {},
+  ) => {
     mock()._reset();
     mock()._readAcrossFiles(true);
+    mock()._fixable(fixable);
 
     const compiler = webpack({
-      context: project,
+      context,
       entry: "./entry.js",
       mode: "development",
-      output: { path: join(project, "dist") },
+      output: { path: join(context, "dist") },
       plugins: [
         new DiagnosticsPlugin({
           checks: [
             {
               use: "eslint",
               eslintPath,
-              cacheLocation: join(project, "cache", ".eslintcache"),
+              cacheLocation: join(context, "cache", ".eslintcache"),
               ...options,
             },
           ],
@@ -131,5 +137,51 @@ describe("typed linting between builds", () => {
       "leaf.js",
       "other.js",
     ]);
+  });
+
+  it("should lint again what `fix` has something to write in", async () => {
+    await build({ fix: true }, { fixable: 1 });
+
+    assert.deepStrictEqual(await build({ fix: true }, { fixable: 1 }), [
+      "entry.js",
+      "leaf.js",
+      "other.js",
+    ]);
+    assert.strictEqual(mock()._fixed.flat().length, 3);
+  });
+
+  it("should reuse what `fix` has nothing to write in", async () => {
+    await build({ fix: true });
+
+    assert.deepStrictEqual(await build({ fix: true }), []);
+  });
+
+  it("should keep ESLint's cache when asked for and no TypeScript can follow imports", async () => {
+    // Outside the package, where no TypeScript resolves.
+    const bare = mkdtempSync(join(tmpdir(), "typed-bare-"));
+
+    try {
+      writeFileSync(join(bare, "entry.js"), "module.exports = 1;\n");
+
+      await build({ cache: true }, { context: bare });
+      assert.strictEqual(mock()._built.at(-1).cache, true);
+
+      await build({}, { context: bare });
+      assert.strictEqual(mock()._built.at(-1).cache, false);
+    } finally {
+      rmSync(bare, { recursive: true, force: true });
+    }
+  });
+
+  it("should keep results for a file ESLint has no config for", async () => {
+    write("ignored.js", "module.exports = 4;\n");
+    write("entry.js", "require('./leaf.js');\nrequire('./ignored.js');\n");
+
+    assert.deepStrictEqual(await build(), [
+      "entry.js",
+      "ignored.js",
+      "leaf.js",
+    ]);
+    assert.deepStrictEqual(await build(), []);
   });
 });

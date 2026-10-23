@@ -51,6 +51,19 @@ describe("result store", () => {
     assert.strictEqual(store.dirty, false);
   });
 
+  it("should read what an earlier run wrote", () => {
+    const path = join(dir, "written.json");
+
+    writeFileSync(
+      path,
+      JSON.stringify({ version: 1, entries: { a: { key: "k", result: 1 } } }),
+    );
+    assert.deepStrictEqual(openStore(path).entries.get("a"), {
+      key: "k",
+      result: 1,
+    });
+  });
+
   it("should read as empty a store written in another shape", () => {
     const path = join(dir, "old.json");
 
