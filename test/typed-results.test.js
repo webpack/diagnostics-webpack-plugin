@@ -52,12 +52,12 @@ describe("typed linting between builds", () => {
   /**
    * One build, as a CI run or `webpack` on the command line makes it.
    * @param {object=} options what the check is configured with
-   * @param {{ context?: string, fixable?: number, report?: string }=} setup where it is built, whether ESLint finds what `fix` can write, and the file it finds an error in
+   * @param {{ context?: string, fixable?: number, report?: string, plugins?: import("webpack").WebpackPluginInstance[] }=} setup where it is built, whether ESLint finds what `fix` can write, the file it finds an error in, and plugins to run before the check
    * @returns {Promise<string[]>} what it linted, by name
    */
   const build = async (
     options = {},
-    { context = project, fixable = 0, report = "" } = {},
+    { context = project, fixable = 0, report = "", plugins = [] } = {},
   ) => {
     mock()._reset();
     mock()._readAcrossFiles(true);
@@ -70,6 +70,7 @@ describe("typed linting between builds", () => {
       mode: "development",
       output: { path: join(context, "dist") },
       plugins: [
+        ...plugins,
         new DiagnosticsPlugin({
           checks: [
             {
@@ -201,5 +202,38 @@ describe("typed linting between builds", () => {
       "leaf.js",
     ]);
     assert.deepStrictEqual(await build(), []);
+  });
+
+  it("should keep nothing for a file gone by the time it is linted", async () => {
+    const removeLeaf = {
+      /** @param {import("webpack").Compiler} compiler the compiler */
+      apply(compiler) {
+        compiler.hooks.compilation.tap("remove-leaf", (compilation) => {
+          compilation.hooks.finishModules.tap("remove-leaf", () => {
+            rmSync(join(project, "leaf.js"));
+          });
+        });
+      },
+    };
+
+    assert.deepStrictEqual(await build({}, { plugins: [removeLeaf] }), [
+      "entry.js",
+      "leaf.js",
+      "other.js",
+    ]);
+
+    const { entries } = JSON.parse(
+      readFileSync(
+        join(project, "cache", ".eslintcache.typed-results.json"),
+        "utf8",
+      ),
+    );
+
+    assert.deepStrictEqual(
+      Object.keys(entries)
+        .map((file) => file.replace(/^.*[\\/]/u, ""))
+        .toSorted(),
+      ["entry.js", "other.js"],
+    );
   });
 });
