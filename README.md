@@ -103,6 +103,7 @@ Every check to run is an entry in `checks`, named by its `use`. The list may nam
 | [`outputReport`](#outputreport)                                                                                     | Shared | A file the same results are written to.                                      |
 | [`readsAcrossFiles`](#readsacrossfiles)                                                                             | Shared | Whether a file's results can turn on another, so a rebuild lints importers.  |
 | [`reportAs`](#reportas)                                                                                             | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
+| [`lintDependentsAfterBuild`](#lintdependentsafterbuild)                                                             | Shared | Whether a watch rebuild waits for the files that turn on a change.           |
 | [`resourceQueryExclude`](#resourcequeryexclude)                                                                     | Shared | Which module queries are left out.                                           |
 | [`threads`](#threads)                                                                                               | Shared | How wide the work is spread.                                                 |
 | [`configType`, `eslintPath`](#eslint)                                                                               | Check  | ESLint's own.                                                                |
@@ -344,7 +345,12 @@ pool of workers — so the option means the same thing whatever is being checked
 and a check added later gets it for nothing. ESLint threads its own work from
 9.34.0 under flat config; Stylelint threads none of its own, so it is pooled.
 TypeScript reads a program whole rather than a file at a time, so it is run on
-one worker: what a thread buys it is webpack's own thread back.
+one worker: what a thread buys it is webpack's own thread back. The compilers of
+a `MultiCompiler` whose TypeScript checks are configured alike share that worker
+and the program it holds, rather than each building and keeping one of their
+own. Over 600 files, two compilers built one after the other (`parallelism: 1`)
+went through a watch with one rebuild in 5.6–5.8 s and 9.8–10.4 s of CPU at
+467–483 MB, against 9.7–10.3 s, 18.7–20.0 s and 803–853 MB with a worker each.
 
 Prefer `"auto"` over a count. A check sizes `"auto"` against the machine, where a
 fixed number can end up competing with webpack for the same cores: over three
@@ -359,6 +365,37 @@ Anything written against the tool itself wins — ESLint's own `concurrency`, sa
 and a check configured with a function, such as a formatter written in the
 configuration, is run on webpack's thread, because a function cannot be handed
 to a worker.
+
+#### `lintDependentsAfterBuild`
+
+- Type:
+
+```ts
+type lintDependentsAfterBuild = boolean;
+```
+
+- Default: `false`
+
+Whether a watch rebuild waits for the files it did not rebuild but has to lint
+again — for a check that [reads across files](#readsacrossfiles), the ones
+importing a file that changed, however indirectly. Set, the build lints what it rebuilt and reports those from
+their last run, and they are linted again once the build is over. When that
+changes what the check reports, the new report is printed to the terminal, and
+the next build carries it — so a dev server overlays it from then on rather than
+at once. `fork-ts-checker-webpack-plugin`'s `async` makes the same trade.
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "eslint", lintDependentsAfterBuild: true }],
+});
+```
+
+Over three hundred modules under typed linting, an edit's rebuild took 191 ms
+rather than 2.0 s, and an error it caused in a file importing the edited one was
+printed 2.4 s after the edit. A build that is not watched, the first build of a
+watch, and a check writing an [`outputReport`](#outputreport) lint everything
+before they finish whatever this says — that file is written with the build, and
+would otherwise hold what the build reported rather than what was found after.
 
 #### `readsAcrossFiles`
 
@@ -383,7 +420,8 @@ drops it before webpack sees it — and this holds for every check, whatever too
 it runs. A change that could reach files some other way — a declaration file
 nothing imports, a `declare global`, a config file, an import that resolves to
 nothing (a stylesheet, an image or another asset webpack bundles aside) — lints
-every file again, as does a project without TypeScript. There,
+every file again, as does a project without TypeScript, or with TypeScript 7,
+whose native compiler has no API to read imports through. There,
 an ESLint check with `cache: true` written down keeps ESLint's own cache, which
 answers for a file whose import changed from before the change.
 
@@ -517,7 +555,13 @@ The work is moved out of the rebuild rather than off the machine: an edit
 arriving while such a check is still running waits for the rest of it, since a
 check holds the thread the build runs on. A report a newer rebuild has already
 overtaken is dropped, and a check never has two of its runs going at once — the
-next starts when the last has reported.
+next starts when the last has reported. A TypeScript check on a worker of its
+own (see [`threads`](#threads)) stops such a run as soon as the next rebuild
+starts, between one file and the next: what the program got through is kept,
+and the next run checks the rest. An edit made while a long run is going is
+then reported once its own run is done, without waiting for the rest of the
+old one. Over 600 files, an edit made while an earlier one was still being
+checked was reported after 2.3–2.6 s instead of 4.2–4.5 s.
 
 #### `ignoreDiagnostics`
 
@@ -784,6 +828,10 @@ new DiagnosticsPlugin({ checks: ["biome"] });
 Like the oxlint check this runs a binary and reads the JSON it answers with,
 which Biome calls an experimental reporter — a release of its own may move the
 shape, and it is the only reporter carrying the severities this check needs.
+A build hands it every file at once when webpack is done building them, one
+run for each 500, rather than in batches while webpack builds: each run reads
+the configuration and the project again. Over 1,500 files that took the CPU of
+the processes from 2.9 s to 2.2 s, and for oxlint from 1.2–1.7 s to 0.3 s.
 
 Biome's project and types rules — `noImportCycles`, `noFloatingPromises` —
 answer for a file from the files it imports, and which rules those are is not
@@ -844,7 +892,8 @@ Not `--reporter`: the check asks for JSON and formats the results itself.
 
 ## TypeScript
 
-Run with `{ use: "typescript" }`, and requires `typescript >= 5`. It type checks
+Run with `{ use: "typescript" }`, and requires `typescript >= 5` (see
+[TypeScript 7](#typescript-7) for the native compiler). It type checks
 the program a `tsconfig.json` describes, so every file that config includes is
 checked whether or not webpack built it, and a type error in a module nothing
 imports yet is still reported. Emit is forced off: webpack writes the output.
@@ -905,6 +954,26 @@ new DiagnosticsPlugin({
   checks: [{ use: "typescript", skipLibCheck: true }],
 });
 ```
+
+### TypeScript 7
+
+TypeScript 7 is a native compiler with no compiler API in JavaScript, so the
+check talks to it through the API it ships instead (`typescript/unstable/async`).
+It runs in a process of its own, which takes the place of
+[`threads`](#threads), and is kept open while webpack watches: a rebuild tells it
+which files webpack saw change. What it prints is what `tsc --pretty` prints.
+
+It checks the project as its config file describes it, so [`build`](#build), a
+[`mode`](#mode) that writes, and compiler options written in the plugin are
+reported as unsupported rather than ignored. Compiler options belong in the
+`tsconfig.json` instead; `build` and a writing `mode` have no TypeScript 7
+counterpart.
+
+Over 600 files, a one-shot build with the check went from 3.5 s to 1.4–1.5 s
+next to TypeScript 6, and webpack's own process from 6.4 to 0.6–0.8 s of CPU and
+from 383 to 108 MB at its peak; the native compiler, checking the same project
+on its own, takes 1.5–1.7 s of CPU. A rebuild after an edit went from 1.0–2.5 s
+to 0.7–0.8 s.
 
 ### `typescriptPath`
 

@@ -167,5 +167,9 @@ export default {
   // read for the answer the way oxlint's can. A rebuild lints again what a
   // change reaches, which a run of Biome barely notices; a project using none
   // of those rules can write `readsAcrossFiles: false`.
+  // Each run is a process of its own that reads the configuration and, for
+  // Biome, the project again: handed every file at once, a build starts one
+  // for each 500 files rather than one for each batch webpack builds.
+  lintsOnce: () => true,
   readsAcrossFiles: () => true,
 };

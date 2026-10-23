@@ -9,7 +9,9 @@ import { afterEach, describe, it } from "node:test";
 
 import webpack from "webpack";
 
+import biome from "../src/checks/biome.js";
 import eslint from "../src/checks/eslint.js";
+import oxlint from "../src/checks/oxlint.js";
 import DiagnosticsPlugin from "../src/index.js";
 import { countThreads } from "../src/threads.js";
 
@@ -48,6 +50,11 @@ describe("linting once", () => {
       // thread itself.
       assert.strictEqual(lintsOnce({ eslintPath: recorderPath }), false);
     });
+  });
+
+  it("should hand Biome and oxlint every file at once, each run being a process", () => {
+    assert.strictEqual(biome.lintsOnce && biome.lintsOnce(), true);
+    assert.strictEqual(oxlint.lintsOnce && oxlint.lintsOnce(), true);
   });
 
   describe("a check that lints once", () => {

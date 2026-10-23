@@ -10,7 +10,7 @@ import { Worker as JestWorker } from "jest-worker";
 /** @typedef {(files: string[]) => Promise<CheckResult[]>} LintTask */
 /** @typedef {JestWorker & { lintFiles: LintTask }} Worker */
 /** @typedef {{ lintFiles: LintTask, end: () => Promise<void> }} Pool */
-/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, end: () => Promise<void> }} Solo */
+/** @typedef {{ lintFiles: () => Promise<EXPECTED_ANY>, cancel: (answer: Promise<EXPECTED_ANY>) => void, end: () => Promise<void> }} Solo */
 
 /**
  * How many threads the user asked for, as a count. A check is spread over one
@@ -107,6 +107,13 @@ function createPool(source, size, setupArgs) {
 function createSolo(source, setupArgs) {
   if (!isTransferable(setupArgs)) return null;
 
+  // Each run is handed a flag it shares with the worker rather than one sent
+  // to it later: a message would wait behind the run it is meant to stop. A
+  // worker can be shared by checks of several compilers, so each run has a
+  // flag of its own and stopping one leaves the rest.
+  /** @type {WeakMap<Promise<EXPECTED_ANY>, Int32Array>} */
+  const flags = new WeakMap();
+
   let worker = /** @type {Worker | null} */ (
     new JestWorker(source, {
       enableWorkerThreads: true,
@@ -116,11 +123,26 @@ function createSolo(source, setupArgs) {
   );
 
   return {
-    lintFiles: async () => {
+    // Not async: the promise handed back is the one `cancel` is given.
+    lintFiles: () => {
       /* istanbul ignore next */
-      if (!worker) return undefined;
+      if (!worker) return Promise.resolve(undefined);
 
-      return /** @type {Worker} */ (worker).lintFiles([]);
+      const stopped = new Int32Array(new SharedArrayBuffer(4));
+      const answer = /** @type {EXPECTED_ANY} */ (worker).lintFiles(
+        [],
+        stopped,
+      );
+
+      flags.set(answer, stopped);
+
+      return answer;
+    },
+    // Whether the run has started or is still queued.
+    cancel: (answer) => {
+      const stopped = flags.get(answer);
+
+      if (stopped) Atomics.store(stopped, 0, 1);
     },
     end: async () => {
       /* istanbul ignore else */

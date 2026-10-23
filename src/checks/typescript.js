@@ -3,9 +3,17 @@
 
 import { createRequire } from "node:module";
 
+import { sharingKey } from "../check.js";
+import { acquire, keptFor, release } from "../compiler-state.js";
 import { countThreads, createSolo } from "../threads.js";
 import { importFrom, toPosixPath } from "../utils.js";
 
+import {
+  checkNative,
+  loadNative,
+  startNative,
+  stopNative,
+} from "./typescript-native.js";
 import { check, describe, getHeld, getSchemas } from "./typescript-program.js";
 
 export { getTypeScriptOptions } from "./typescript-program.js";
@@ -16,6 +24,7 @@ export { getTypeScriptOptions } from "./typescript-program.js";
 /** @typedef {import("./index.js").FormatterOption} FormatterOption */
 /** @typedef {import("../options.js").CheckOptions} Options */
 /** @typedef {import("../threads.js").Solo} Solo */
+/** @typedef {import("./typescript-native.js").Native} Native */
 
 /** @typedef {EXPECTED_ANY} TypeScript */
 /** @typedef {EXPECTED_ANY} Diagnostic */
@@ -35,15 +44,10 @@ export { getTypeScriptOptions } from "./typescript-program.js";
  * @property {string[]} missing the paths an import resolved to nothing through
  * @property {Set<string>} reads every path it read or looked for, as posix paths
  * @property {string[]} folders where a file the program does not hold yet would be found, as posix paths ending in a slash
+ * @property {string[]} extensions what a file the config file picks up ends in
  */
 
 const nodeRequire = createRequire(import.meta.url);
-
-// What a file the config file's `include` would pick up ends in.
-const SCRIPT = /\.(?:[cm]?[jt]sx?|json)$/u;
-
-/** @type {WeakMap<EXPECTED_ANY, Map<string, Run>>} */
-const runsByCompiler = new WeakMap();
 
 /**
  * Whether a rebuild can have changed what the program says: a file it read or
@@ -60,69 +64,87 @@ function reaches(run, changed) {
 
     return (
       run.reads.has(file) ||
-      (SCRIPT.test(file) &&
+      (run.extensions.some((extension) => file.endsWith(extension)) &&
         run.folders.some((folder) => file.startsWith(folder)))
     );
   });
 }
 
-/** @type {WeakMap<EXPECTED_ANY, Map<string, Solo>>} */
-const workersByCompiler = new WeakMap();
+/** @type {Map<string, Promise<EXPECTED_ANY>>} */
+const natives = new Map();
 
 /**
- * @param {EXPECTED_ANY} compiler the compiler the check ran for
- * @param {string} id a key unique to the check within that compiler
+ * The check on TypeScript 7, whose compiler runs in a process of its own and
+ * answers with what it found already described.
+ * @param {CheckContext} context check context
+ * @param {string} id a key unique to the check within its compiler
+ * @param {EXPECTED_ANY} loaded what `loadNative` loaded
+ * @returns {CheckInstance} typescript check
  */
-function dropWorker(compiler, id) {
-  const checks = workersByCompiler.get(compiler);
+function createNative({ options, compilation }, id, loaded) {
+  const { compiler } = compilation;
+  // The project the native compiler opened outlives one of the builds it
+  // answers for, and compilers checking it alike share the process.
+  const key = `typescript-native\0${sharingKey("typescript", options) || id}`;
+  const native = /** @type {Native} */ (
+    acquire(compiler, key, () => startNative(loaded, options), stopNative)
+  );
+  /** @type {string[]} */
+  let read = [];
+  /** @type {string[]} */
+  let directories = [];
+  let checked = false;
 
-  if (checks) checks.delete(id);
-}
+  return {
+    async lintFiles() {
+      if (checked) return [];
 
-/**
- * The one worker this check runs on, kept for the compiler it runs for so that
- * the program it holds outlives the compilation that built it.
- * @param {EXPECTED_ANY} compiler the compiler the check runs for
- * @param {string} id a key unique to the check within that compiler
- * @param {Options} options the options the check was configured with
- * @returns {Solo | null} the worker, or nothing when it cannot be handed over
- */
-function getWorker(compiler, id, options) {
-  let checks = workersByCompiler.get(compiler);
+      checked = true;
 
-  if (!checks) {
-    checks = new Map();
-    workersByCompiler.set(compiler, checks);
-  }
+      const found = await checkNative(native, options, compiler);
 
-  let worker = checks.get(id);
+      read = found.files;
+      directories = found.directories;
 
-  if (!worker) {
-    const started = createSolo(nodeRequire.resolve("./typescript-worker.js"), [
-      options,
-    ]);
+      return found.diagnostics;
+    },
+    readFiles() {
+      return read;
+    },
+    readDirectories() {
+      return directories;
+    },
+    async getResults(results) {
+      return results;
+    },
+    filterResults(results, keep) {
+      return results.filter((one) => keep(one));
+    },
+    splitResults(results) {
+      return {
+        errors: results.filter((one) => one.severity === "error"),
+        warnings: results.filter((one) => one.severity !== "error"),
+      };
+    },
+    async getFormatter(formatter) {
+      if (typeof formatter === "function") {
+        return async (results) => String(await formatter(results));
+      }
 
-    if (!started) return null;
+      return async (results) =>
+        /** @type {Described[]} */ (results)
+          .map((one) => one.formatted)
+          .join("")
+          .trim();
+    },
+    // A build that has no next one keeps no project, and a compiler left
+    // running would hold the process open after webpack is done with it.
+    async cleanup() {
+      if (compiler.watchMode) return;
 
-    worker = started;
-    checks.set(id, worker);
-
-    // The program is the worker's, so in a watch it lives as long as the
-    // compiler does rather than as long as one of its builds. A watch that is
-    // closed without the compiler ends it too, or the thread outlives the work.
-    const stop = async () => {
-      dropWorker(compiler, id);
-
-      await /** @type {Solo} */ (worker).end();
-    };
-
-    compiler.hooks.shutdown.tapPromise("DiagnosticsPlugin", stop);
-    compiler.hooks.watchClose.tap("DiagnosticsPlugin", () => {
-      stop();
-    });
-  }
-
-  return worker;
+      await release(compiler, key);
+    },
+  };
 }
 
 /**
@@ -147,8 +169,30 @@ async function create({ key, id: entry, options, compilation }) {
   // The program is this entry's: another check of the same tool reads the same
   // config file under options of its own.
   const id = `${key}\0${entry}`;
+  const specifier = String(options.typescriptPath || "typescript");
+  let loading = natives.get(specifier);
+
+  if (!loading) {
+    loading = loadNative(specifier);
+    natives.set(specifier, loading);
+  }
+
+  const loaded = await loading;
+
+  if (loaded) {
+    return createNative({ key, id: entry, options, compilation }, id, loaded);
+  }
+
+  // Two checks that would build the same program share the worker holding it.
+  const program = `typescript-worker\0${sharingKey("typescript", options) || id}`;
   const worker = canThread(options)
-    ? getWorker(compilation.compiler, id, options)
+    ? acquire(
+        compilation.compiler,
+        program,
+        () =>
+          createSolo(nodeRequire.resolve("./typescript-worker.js"), [options]),
+        (started) => started.end(),
+      )
     : null;
 
   /** @type {TypeScript} */
@@ -174,6 +218,10 @@ async function create({ key, id: entry, options, compilation }) {
   // The program is the whole project, so it is built once however many batches
   // of files the plugin hands over.
   let checked = false;
+  // The worker's answer to this compilation's run, which is what a newer
+  // compilation stops when it takes over.
+  /** @type {Promise<EXPECTED_ANY> | undefined} */
+  let answer;
 
   /**
    * @param {EXPECTED_ANY} one a diagnostic, or what a worker said of one
@@ -184,9 +232,8 @@ async function create({ key, id: entry, options, compilation }) {
 
   const { compiler } = compilation;
   /** @type {Map<string, Run>} */
-  const runs = runsByCompiler.get(compiler) || new Map();
-
-  runsByCompiler.set(compiler, runs);
+  /** @type {Map<string, Run>} */
+  const runs = keptFor(compiler, "typescript-runs", () => new Map());
 
   /**
    * @param {Omit<Run, "reads" | "folders">} found what this run found and read
@@ -231,7 +278,9 @@ async function create({ key, id: entry, options, compilation }) {
       }
 
       if (worker) {
-        const found = await worker.lintFiles();
+        answer = worker.lintFiles();
+
+        const found = await answer;
 
         return remember(
           {
@@ -241,6 +290,7 @@ async function create({ key, id: entry, options, compilation }) {
             directories: found.directories,
             writes: found.writes,
             missing: found.missing,
+            extensions: found.extensions,
           },
           found.seen,
         );
@@ -256,9 +306,15 @@ async function create({ key, id: entry, options, compilation }) {
           directories: found.directories,
           writes: found.writes,
           missing: [...held.missing],
+          extensions: found.extensions,
         },
         [...held.seen],
       );
+    },
+    // A run of an older compilation is left to finish on the worker while
+    // webpack builds the next one, which waits for it before checking again.
+    cancel() {
+      if (worker && answer) worker.cancel(answer);
     },
     readFiles() {
       return read;
@@ -322,9 +378,7 @@ async function create({ key, id: entry, options, compilation }) {
 
       if (!worker || compiler.watchMode) return;
 
-      dropWorker(compilation.compiler, id);
-
-      await worker.end();
+      await release(compilation.compiler, program);
     },
   };
 }

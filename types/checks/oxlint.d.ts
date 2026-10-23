@@ -9,6 +9,7 @@ declare namespace _default {
   export function defaultExclude(): string;
   export { create };
   export function resultPath(result: EXPECTED_ANY): string;
+  export function lintsOnce(): boolean;
   export { readsAcrossFiles };
 }
 export default _default;

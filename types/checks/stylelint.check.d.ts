@@ -10,8 +10,8 @@ export function validate(
     rootData?: any;
   },
 ): any;
-export default t;
-declare function t(
+export default r;
+declare function r(
   e: any,
   {
     instancePath: s,

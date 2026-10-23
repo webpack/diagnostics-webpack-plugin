@@ -26,9 +26,7 @@
     "stylelint's",
     "stylelintcache",
     "stylelintignore",
-    "stylelintrc",
-    "pcss",
-    "styl"
+    "stylelintrc"
   ],
   "ignorePaths": [
     "**/__snapshots__/**",

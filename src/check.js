@@ -6,6 +6,7 @@ import { isAbsolute, join, relative } from "node:path";
 import picomatch from "picomatch";
 
 import DiagnosticError from "./DiagnosticError.js";
+import { keptFor } from "./compiler-state.js";
 import { reportedAs } from "./options.js";
 import { toPosixPath } from "./utils.js";
 
@@ -23,17 +24,23 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {Dependencies & { errors?: DiagnosticError, warnings?: DiagnosticError, outputReport?: OutputReportContent }} Report */
 /** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report>, detach: (report: Promise<Report>) => void }} Runner */
 /** @typedef {Map<string, CheckResult | undefined>} ResultStore */
+/** @typedef {{ key: string, run: Promise<Run>, joined: boolean }} SharedRun */
 
-/** @type {WeakMap<Compilation["compiler"], Map<string, ResultStore>>} */
-const resultStores = new WeakMap();
-
-/** @type {WeakMap<Compilation["compiler"], Map<string, Promise<void>>>} */
-const detachedReports = new WeakMap();
+/**
+ * The runs of a compiler's checks left to finish on their own.
+ * @param {Compilation} compilation compilation
+ * @returns {Map<string, { settled: Promise<void>, cancel: () => void }>} each one's report, by check
+ */
+function detachedReportsOf(compilation) {
+  return keptFor(compilation.compiler, "detached-reports", () => new Map());
+}
 
 // A run of a check that is still going, so that two compilers over the same
 // files drive the tool once. It is kept only while it runs: what comes after
-// belongs to the store of the compiler that made it.
-/** @type {Map<string, Promise<Run>>} */
+// belongs to the store of the compiler that made it. A run another compiler
+// joined is one that compiler waits for too, so it is never stopped, and a run
+// that is stopped is no longer there to join.
+/** @type {Map<string, SharedRun>} */
 const sharedRuns = new Map();
 
 // What only decides which files are checked, or how what is found is reported.
@@ -42,6 +49,7 @@ const NOT_SHARED = new Set([
   "exclude",
   "ignoreDiagnostics",
   "extensions",
+  "lintDependentsAfterBuild",
   "files",
   "formatter",
   "outputReport",
@@ -85,41 +93,29 @@ function sharingKey(name, options) {
  * @returns {ResultStore} what the check last found in every file it covered
  */
 function getResultStore(compilation, check) {
-  const { compiler } = compilation;
-  let stores = resultStores.get(compiler);
-
-  if (!stores) {
-    stores = new Map();
-    resultStores.set(compiler, stores);
-  }
-
-  let store = stores.get(check);
-
-  if (!store) {
-    store = new Map();
-    stores.set(check, store);
-  }
-
-  return store;
+  return keptFor(compilation.compiler, `results\0${check}`, () => new Map());
 }
 
 /**
  * The report of a run left to finish on its own, taken so that the next run of
  * the same check waits for it rather than driving a second tool beside it.
+ * Nothing prints a report of an older compilation, so a check that can stop
+ * one is told to.
  * @param {Compilation} compilation compilation
  * @param {string} check a key unique to the check within the compiler
  * @returns {Promise<void> | undefined} the report still to land, if there is one
  */
 function takeDetachedReport(compilation, check) {
-  const reports = detachedReports.get(compilation.compiler);
-
-  if (!reports) return undefined;
-
+  const reports = detachedReportsOf(compilation);
   const report = reports.get(check);
 
   reports.delete(check);
 
-  return report;
+  if (!report) return undefined;
+
+  report.cancel();
+
+  return report.settled;
 }
 
 /**
@@ -249,6 +245,9 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
   const linted = new Set();
   // A check that cannot lint fails the same way for every batch it is given.
   let failed = false;
+  // The runs this one started that another compiler could join.
+  /** @type {SharedRun[]} */
+  const runs = [];
 
   /**
    * What the check answers with, and what it says it read to answer — taken
@@ -262,7 +261,11 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
     const key = sharing && `${sharing}\0${files.toSorted().join("\0")}`;
     const running = key ? sharedRuns.get(key) : undefined;
 
-    if (running) return running;
+    if (running) {
+      running.joined = true;
+
+      return running.run;
+    }
 
     const started = instance.lintFiles(files).then((results) => ({
       results,
@@ -274,8 +277,10 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
 
     if (key) {
       const forget = () => sharedRuns.delete(key);
+      const shared = { key, run: started, joined: false };
 
-      sharedRuns.set(key, started);
+      sharedRuns.set(key, shared);
+      runs.push(shared);
       started.then(forget, forget);
     }
 
@@ -490,23 +495,30 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
   function detach(report) {
     detached = true;
 
-    let reports = detachedReports.get(compilation.compiler);
-
-    if (!reports) {
-      reports = new Map();
-      detachedReports.set(compilation.compiler, reports);
-    }
-
-    reports.set(
-      checkKey,
-      report.then(
+    detachedReportsOf(compilation).set(checkKey, {
+      settled: report.then(
         () => {},
         () => {},
       ),
-    );
+      cancel: () => {
+        if (runs.some((shared) => shared.joined)) return;
+
+        for (const shared of runs) {
+          if (sharedRuns.get(shared.key) === shared) {
+            sharedRuns.delete(shared.key);
+          }
+        }
+
+        pending.then((instance) => {
+          if (instance && instance.cancel) instance.cancel();
+        });
+      },
+    });
   }
 
   return { detach, keep, lint, report };
 }
+
+export { sharingKey };
 
 export default createCheckRunner;
