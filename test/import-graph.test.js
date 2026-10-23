@@ -79,6 +79,139 @@ describe("import graph", () => {
     ]);
   });
 
+  describe("what a changed file shows the files importing it", () => {
+    // Asked twice: what a file showed is known from its first change on.
+    const twice = (name, first, second) => {
+      write(name, first);
+      affected(all, [name]);
+      write(name, second);
+
+      return affected(all, [name]);
+    };
+
+    it("should leave its importers be once only its body or comments change", () => {
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "// a note\nexport const leaf: number = 3;\n",
+        ),
+        ["leaf.ts"],
+      );
+    });
+
+    it("should reach its importers once a type it exports changes", () => {
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          'export const leaf: string = "2";\n',
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should reach its importers once what it imports changes", () => {
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          'import "./alone";\nexport const leaf: number = 2;\n',
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should reach its importers where its exports do not say their own types", () => {
+      // What it returns takes a type checker to say, which the declaration
+      // read without one writes as `any` for both.
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export function make() { return [1].map((x) => x); }\n",
+          'export function make() { return ["1"].map((x) => x); }\n',
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should read what a project's own emit drops, which an importer's rules still see", () => {
+      write(
+        "tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            moduleResolution: "bundler",
+            removeComments: true,
+            stripInternal: true,
+          },
+        }),
+      );
+
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "/** @deprecated */\nexport const leaf: number = 2;\n",
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "export const leaf: number = 2;\n/** @internal */\nexport const hidden: number = 1;\n",
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should reach its importers with a TypeScript that cannot say what a file shows", () => {
+      graph = createGraph({ ...ts, transpileDeclaration: undefined });
+
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "// a note\nexport const leaf: number = 2;\n",
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should reach the importers of a file that has gone", () => {
+      affected(all, ["leaf.ts"]);
+      rmSync(at("leaf.ts"));
+
+      assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+        "leaf.ts",
+        "middle.ts",
+        "top.ts",
+      ]);
+    });
+
+    it("should reach the importers of a quiet file that a loud change reaches", () => {
+      write(
+        "middle.ts",
+        'import { leaf } from "./leaf";\nexport const m: number = leaf;\n',
+      );
+      affected(all, ["middle.ts"]);
+      write(
+        "middle.ts",
+        'import { leaf } from "./leaf";\nexport const m: number = leaf + 0;\n',
+      );
+      write("leaf.ts", 'export const leaf: string = "1";\n');
+
+      // The middle file says the same, but through it the leaf's new type
+      // reaches the top.
+      assert.deepStrictEqual(affected(all, ["middle.ts", "leaf.ts"]), [
+        "leaf.ts",
+        "middle.ts",
+        "top.ts",
+      ]);
+    });
+  });
+
   it("should follow a type-only import, which a bundler drops", () => {
     assert.deepStrictEqual(affected(all, ["types.ts"]), [
       "typed.ts",
@@ -139,6 +272,37 @@ describe("import graph", () => {
       "alone.ts",
       'import { gone } from "./gone";\nexport const a = gone;\n',
     );
+
+    assert.strictEqual(affected(all, ["leaf.ts"]), undefined);
+  });
+
+  it("should keep answering for what a change reaches where a stylesheet is imported", () => {
+    // Webpack bundles it; TypeScript resolves it to nothing, and nothing
+    // written later turns it into a type.
+    write(
+      "alone.ts",
+      'import "./styles.css";\nimport logo from "./logo.svg?url";\nexport const a = logo;\n',
+    );
+
+    assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+      "leaf.ts",
+      "middle.ts",
+      "top.ts",
+    ]);
+  });
+
+  it("should answer for every file where a stylesheet can be read through a declaration beside it", () => {
+    write(
+      "tsconfig.json",
+      JSON.stringify({
+        compilerOptions: {
+          strict: true,
+          moduleResolution: "bundler",
+          allowArbitraryExtensions: true,
+        },
+      }),
+    );
+    write("alone.ts", 'import "./styles.css";\nexport const a = 1;\n');
 
     assert.strictEqual(affected(all, ["leaf.ts"]), undefined);
   });
