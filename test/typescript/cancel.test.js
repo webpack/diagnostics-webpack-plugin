@@ -139,7 +139,13 @@ describe("cancel", () => {
             if (!existsSync(outcome)) return;
 
             clearInterval(stuck);
-            assert.strictEqual(readFileSync(outcome, "utf8"), "stalling");
+            // A rebuild webpack starts late on its own, as it can on Windows,
+            // has stopped the run by now as well: either way it is stuck on
+            // this file or was stopped while it was.
+            assert.match(
+              readFileSync(outcome, "utf8"),
+              /^(stalling|cancelled)$/u,
+            );
             writeFileSync(checked, "export const wrong: string = 42;\n");
           }, 10);
         }

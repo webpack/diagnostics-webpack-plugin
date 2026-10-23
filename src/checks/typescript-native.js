@@ -6,6 +6,8 @@ import { createRequire } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { toPosixPath } from "../utils.js";
+
 import { getTypeScriptOptions } from "./typescript-program.js";
 
 /** @typedef {import("../options.js").CheckOptions} Options */
@@ -148,6 +150,19 @@ function format(diagnostic, error, context, texts) {
 }
 
 /**
+ * A path as the native compiler and webpack can both be matched by: webpack
+ * spells one with the platform's separators, the compiler with forward
+ * slashes, and Windows tells no case apart.
+ * @param {string} file a path
+ * @returns {string} what it is known by
+ */
+function keyOf(file) {
+  const posix = toPosixPath(resolve(file));
+
+  return process.platform === "win32" ? posix.toLowerCase() : posix;
+}
+
+/**
  * Tells the native compiler what changed since it last looked: webpack knows,
  * so nothing has to be read again to find out.
  * @param {Native} native the client and what it last saw
@@ -161,7 +176,7 @@ function changesSince(native, compiler) {
   const created = [];
 
   for (const file of compiler.modifiedFiles || []) {
-    if (native.files.has(file)) {
+    if (native.files.has(keyOf(file))) {
       changed.push(file);
       continue;
     }
@@ -277,7 +292,7 @@ async function checkNative(native, options, compiler) {
     });
   }
 
-  native.files = new Set(await program.getSourceFileNames());
+  native.files = new Set((await program.getSourceFileNames()).map(keyOf));
 
   return {
     diagnostics,
