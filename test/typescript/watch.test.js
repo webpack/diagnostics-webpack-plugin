@@ -20,8 +20,9 @@ const trigger = join(fixture, "trigger.js");
 
 /**
  * @param {boolean} strict whether the project is checked strictly
+ * @param {{ declaration?: boolean }=} more what else the project is compiled with
  */
-function writeConfig(strict) {
+function writeConfig(strict, more = {}) {
   writeFileSync(
     configFile,
     `${JSON.stringify(
@@ -31,6 +32,7 @@ function writeConfig(strict) {
           target: "es2022",
           module: "preserve",
           skipLibCheck: true,
+          ...more,
         },
         include: ["*.ts"],
       },
@@ -127,6 +129,52 @@ describe("watch", () => {
         false,
         true,
       ]);
+      done();
+    });
+  });
+
+  it("should keep what a declaration says while another file changes, and hear it from one that starts to", (t, done) => {
+    writeConfig(true, { declaration: true });
+    writeFileSync(trigger, "export const trigger = 1;\n");
+    // An anonymous class cannot carry a private member into a declaration.
+    const broken = "export const make = () => class { private x = 1; };\n";
+
+    writeFileSync(dependency, broken);
+    writeFileSync(orphan, "export const fine = 1;\n");
+
+    const compiler = pack("watch");
+    let step = 0;
+    const said = (stats) =>
+      stats.compilation.errors.map(({ message }) => message).join("\n");
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      if (step === 0) {
+        assert.match(said(stats), /dependency\.ts[\s\S]*TS4094/u);
+
+        step = 1;
+        // Nothing this file declares changes what the other one does.
+        writeFileSync(orphan, "export const fine = 2;\n");
+
+        return;
+      }
+
+      if (step === 1) {
+        // The other file's declaration is still wrong, though nothing
+        // worked it out again.
+        assert.match(said(stats), /dependency\.ts[\s\S]*TS4094/u);
+        assert.doesNotMatch(said(stats), /orphan\.ts/u);
+
+        step = 2;
+        writeFileSync(orphan, broken.replace("make", "build"));
+
+        return;
+      }
+
+      if (!/orphan\.ts/u.test(said(stats))) return;
+
+      assert.match(said(stats), /dependency\.ts/u);
       done();
     });
   });
