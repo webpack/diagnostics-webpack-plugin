@@ -19,7 +19,7 @@
       "type": "boolean"
     },
     "memoryLimit": {
-      "description": "The most memory, in MB, the worker the check runs on may hold for its program. Over it, the check reports so and starts from nothing on the next build rather than taking webpack's process with it. Unset, the worker may hold as much as Node gives a thread. At least 16: below that a thread cannot even start.",
+      "description": "The most memory, in MB, the JavaScript heap of the worker the check runs on may hold for its program (Node's maxOldGenerationSizeMb for that thread). Over it, the check reports so and starts from nothing on the next build. Memory outside the heap is not counted, and a --max-old-space-size given to Node takes its place. Unset, the worker may hold as much as Node gives a thread. At least 16: below that a thread cannot even start.",
       "type": "number",
       "minimum": 16
     },

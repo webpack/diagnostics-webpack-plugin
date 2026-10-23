@@ -967,12 +967,18 @@ type memoryLimit = number;
 
 - Default: `undefined`, which is what Node gives a thread
 
-The most memory, in MB, the worker the check runs on may hold for its program.
-Over it, the check reports so — naming the limit — and the next build starts
-the program from nothing, rather than a runaway program taking webpack's
-process with it. It applies only where the check has a worker of its own (see
-[`threads`](#threads)), and has to be at least 16, below which a thread cannot
-even start.
+The most memory, in MB, the JavaScript heap of the worker the check runs on may
+hold for its program: Node's `maxOldGenerationSizeMb` for that thread. Over it,
+the check reports so — naming the limit — and the next build starts the program
+from nothing, where a runaway program would otherwise grow the heap webpack's
+process shares with it. It applies only where the check has a worker of its own
+(see [`threads`](#threads)), and has to be at least 16, below which a thread
+cannot even start.
+
+What it bounds is the heap alone: memory held outside it, such as buffers, is
+not counted, and a process that runs out of memory as a whole can still be
+stopped. A `--max-old-space-size` given to Node, in its arguments or in
+`NODE_OPTIONS`, takes the place of this limit for every thread.
 
 It bounds memory rather than saving any: over three hundred files, a check
 that peaked at 588 MB without one peaked at 555 MB under 512 and took 10%
