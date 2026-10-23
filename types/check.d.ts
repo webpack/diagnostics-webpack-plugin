@@ -33,6 +33,11 @@ export type Runner = {
   detach: (report: Promise<Report>) => void;
 };
 export type ResultStore = Map<string, CheckResult | undefined>;
+export type SharedRun = {
+  key: string;
+  run: Promise<Run>;
+  joined: boolean;
+};
 /**
  * Creates the runner synchronously so that the compilation hooks are tapped
  * before webpack starts building modules, whatever the tool takes to load. A
