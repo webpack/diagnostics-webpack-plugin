@@ -613,7 +613,7 @@ Run with `{ use: "eslint" }`. It lints the files webpack builds, so only the mod
 
 Alongside the shared options you can pass any [ESLint Node.js API option](https://eslint.org/docs/latest/integrate/nodejs-api#-new-eslintoptions) — they are handed to the `ESLint` class as they are.
 
-[`threads`](#threads) reaches ESLint as its own `concurrency` from 9.34.0 under flat config, and an older ESLint or an `eslintrc` one is pooled instead. Typed linting — a configuration with `parserOptions.project` or `projectService` — is the exception: every thread builds the whole TypeScript program again, and from cold on each rebuild, so it is linted on webpack's thread, where the program stays warm. Write `concurrency` yourself and that is what ESLint is given, whatever `threads` says. Note that webpack spells this idea `parallelism`, and uses the word concurrency for something else again — bounded work on one thread.
+[`threads`](#threads) reaches ESLint as its own `concurrency` from 9.34.0 under flat config, and an older ESLint or an `eslintrc` one is pooled instead. Typed linting — a configuration with `parserOptions.project` or `projectService` — is the exception: every thread builds the whole TypeScript program again, and from cold on each rebuild, so it is linted on webpack's thread, where the program stays warm. Write `concurrency` yourself and that is what ESLint is given, whatever `threads` says. Threaded by ESLint, a check is handed every file at once when webpack is done building them rather than in batches while it builds: ESLint starts its workers and loads the configuration in each of them for every run, which over 1,500 files took a build from 13 s and 45 s of CPU to 8.5 s and 17 s. Note that webpack spells this idea `parallelism`, and uses the word concurrency for something else again — bounded work on one thread.
 
 A rebuild lints only the files webpack rebuilt and reports the rest from the previous run, so [`lintOnStart`](#lintonstart) is only worth setting to start a watch run quiet.
 
@@ -1059,7 +1059,7 @@ module.exports = {
 
 `label`, `filesSource`, `defaults`, `defaultExclude` and `schema` are optional; the plugin fills in the defaults of a module-scanning check that excludes `node_modules`.
 
-An adapter whose results come per file says which file with `resultPath(result)`, and a rebuild then lints only what changed. One whose tool reads other files to answer for one says so with `readsAcrossFiles(compiler, options)`, and the plugin lints again every file a change reaches through its own import graph — or through the adapter's `affectedFiles(compiler, files, changed)`, where it knows better.
+An adapter whose results come per file says which file with `resultPath(result)`, and a rebuild then lints only what changed. One whose tool reads other files to answer for one says so with `readsAcrossFiles(compiler, options)`, and the plugin lints again every file a change reaches through its own import graph — or through the adapter's `affectedFiles(compiler, files, changed)`, where it knows better. An adapter is handed files in batches while webpack builds, so that its tool starts early; one whose tool pays for every run it starts — workers, configuration — says `lintsOnce(options)` and is handed them all at once instead.
 
 ## Migrating
 

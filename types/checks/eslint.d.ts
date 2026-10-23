@@ -10,6 +10,7 @@ declare namespace _default {
   }
   export function defaultExclude(): string;
   export function resultPath(result: EXPECTED_ANY): string;
+  export { lintsOnce };
   export function readsAcrossFiles(compiler: EXPECTED_ANY): boolean;
   export { create };
   export { getESLintOptions };
@@ -34,6 +35,16 @@ export type ESLintClass = {
  * @returns {ESLintOptions} the options ESLint itself understands
  */
 export function getESLintOptions(options: Options): ESLintOptions;
+/**
+ * ESLint starts the workers of a threaded lint for every `lintFiles` and loads
+ * the configuration and its plugins in each of them, so a build handing it
+ * files in batches as webpack builds them pays for that once per batch.
+ * Threaded by ESLint, a check is handed every file once the graph is done;
+ * the pool of our own lives across batches and is handed them as they come.
+ * @param {Options} options options
+ * @returns {boolean} whether ESLint threads the lint itself
+ */
+declare function lintsOnce(options: Options): boolean;
 /**
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} eslint check

@@ -59,6 +59,7 @@ import typescript from "./typescript.js";
  * @property {((compiler: Compiler) => string | string[])=} defaultExclude the globs excluded when the user specifies none
  * @property {((compiler: Compiler, options: CheckOptions) => boolean)=} readsAcrossFiles whether what the check reports of one file can turn on another, so that a rebuild lints again every file a change reaches rather than keeping what it said of the ones that did not change; `readsAcrossFiles` written in the options answers instead
  * @property {((compiler: Compiler, files: string[], changed: string[]) => Promise<Set<string> | undefined>)=} affectedFiles of a check that reads across files, the ones a change can have changed the results of, as posix paths; left out, the plugin answers from the import graph it keeps for every such check, and nothing means every file
+ * @property {((options: CheckOptions) => boolean)=} lintsOnce whether the check is handed every file once the module graph is done rather than in batches while webpack builds, as a tool that starts its workers for every run is
  */
 
 /**
@@ -73,6 +74,7 @@ import typescript from "./typescript.js";
  * @property {((result: CheckResult) => string | undefined)=} resultPath the file a result came from, without which a rebuild re-lints everything
  * @property {((compiler: Compiler, options: CheckOptions) => boolean)=} readsAcrossFiles whether what the check reports of one file can turn on another, so that a rebuild lints again every file a change reaches rather than keeping what it said of the ones that did not change; `readsAcrossFiles` written in the options answers instead
  * @property {((compiler: Compiler, files: string[], changed: string[]) => Promise<Set<string> | undefined>)=} affectedFiles of a check that reads across files, the ones a change can have changed the results of, as posix paths; left out, the plugin answers from the import graph it keeps for every such check, and nothing means every file
+ * @property {((options: CheckOptions) => boolean)=} lintsOnce whether the check is handed every file once the module graph is done rather than in batches while webpack builds, as a tool that starts its workers for every run is
  */
 
 /** @type {Map<string, CheckAdapter>} */
