@@ -1,7 +1,14 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname } from "node:path";
 
 /**
@@ -73,18 +80,28 @@ function saveStore(store) {
     }
   }
 
+  // Written aside and moved into place, so that another build reading it
+  // meanwhile reads all of it or none of it.
+  const written = `${store.path}.${process.pid}.tmp`;
+
   try {
     mkdirSync(dirname(store.path), { recursive: true });
     writeFileSync(
-      store.path,
+      written,
       JSON.stringify({
         version: VERSION,
         entries: Object.fromEntries(store.entries),
       }),
     );
+    renameSync(written, store.path);
     store.dirty = false;
   } catch {
     // Read-only, or gone: the results are linted again next time.
+    try {
+      rmSync(written, { force: true });
+    } catch {
+      // Nothing was written aside either.
+    }
   }
 }
 

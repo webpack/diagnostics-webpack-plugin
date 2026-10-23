@@ -460,6 +460,54 @@ function signatures(graph, files) {
   }
 
   const project = projectSignature(graph, configs);
+  /**
+   * What each file says of itself, and what it imports, read once however
+   * many of the closures reach it.
+   * @type {Map<string, { parts: string[], imports: string[] }>}
+   */
+  const known = new Map();
+  /**
+   * @param {string} file the file, as a posix path
+   * @returns {{ parts: string[], imports: string[] }} what it says of itself, and what it imports
+   */
+  const describe = (file) => {
+    let described = known.get(file);
+
+    if (described) return described;
+
+    if (isPackage(file)) {
+      let stat;
+
+      try {
+        stat = statSync(file);
+      } catch {
+        // Gone, which is what is said of it.
+      }
+
+      described = {
+        parts: [`${file} ${stat ? `${stat.mtimeMs} ${stat.size}` : "gone"}`],
+        imports: [],
+      };
+    } else {
+      const read = readNow(graph, file);
+
+      described = read
+        ? {
+            parts: [
+              `${file} ${read.hash}`,
+              ...read.imports.missing.map(
+                (specifier) => `${file} misses ${specifier}`,
+              ),
+            ],
+            imports: read.imports.resolved,
+          }
+        : { parts: [`${file} gone`], imports: [] };
+    }
+
+    known.set(file, described);
+
+    return described;
+  };
   /** @type {Map<string, string>} */
   const found = new Map();
 
@@ -472,33 +520,11 @@ function signatures(graph, files) {
     const queue = [file];
 
     for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
-      if (isPackage(next)) {
-        let stat;
+      const described = describe(next);
 
-        try {
-          stat = statSync(next);
-        } catch {
-          // Gone, which is what is said of it.
-        }
+      parts.push(...described.parts);
 
-        parts.push(`${next} ${stat ? `${stat.mtimeMs} ${stat.size}` : "gone"}`);
-        continue;
-      }
-
-      const read = readNow(graph, next);
-
-      if (!read) {
-        parts.push(`${next} gone`);
-        continue;
-      }
-
-      parts.push(`${next} ${read.hash}`);
-
-      for (const specifier of read.imports.missing) {
-        parts.push(`${next} misses ${specifier}`);
-      }
-
-      for (const target of read.imports.resolved) {
+      for (const target of described.imports) {
         if (!seen.has(target)) {
           seen.add(target);
           queue.push(target);

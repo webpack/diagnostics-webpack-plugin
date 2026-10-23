@@ -113,15 +113,31 @@ describe("reading across files", () => {
       output: { path: join(import.meta.dirname, "outputs") },
       plugins: [new DiagnosticsPlugin({ checks: [entry] })],
     });
-    let first = true;
+    let edits = 0;
+    const edit = () => {
+      calls.length = 0;
+      edits += 1;
+      writeFileSync(join(context, "leaf.js"), `module.exports = ${edits};\n`);
+    };
 
     watching = compiler.watch({}, (err) => {
       assert.strictEqual(err, null);
 
-      if (first) {
-        first = false;
-        calls.length = 0;
-        writeFileSync(join(context, "leaf.js"), "module.exports = 3;\n");
+      if (edits === 0) {
+        edit();
+
+        return;
+      }
+
+      // macOS can tell of a file written before the watch started only once
+      // it has, and a rebuild for it lints that file too: edit the leaf again
+      // until a rebuild is for the edit alone.
+      const modified = [...(compiler.modifiedFiles || [])].filter(
+        (file) => file.endsWith(".js") && !file.endsWith("leaf.js"),
+      );
+
+      if (modified.length > 0) {
+        edit();
 
         return;
       }

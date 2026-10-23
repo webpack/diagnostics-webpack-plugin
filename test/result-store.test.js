@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -62,6 +69,23 @@ describe("result store", () => {
       key: "k",
       result: 1,
     });
+  });
+
+  it("should leave nothing aside when the move into place fails", () => {
+    // A directory where the store goes: it is written aside, but cannot be
+    // moved over it.
+    const path = join(dir, "taken");
+
+    mkdirSync(path);
+
+    const store = openStore(path);
+
+    store.entries.set(path, { key: "a", result: 1 });
+    store.dirty = true;
+    saveStore(store);
+
+    assert.deepStrictEqual(readdirSync(dir), ["taken"]);
+    assert.strictEqual(store.dirty, true);
   });
 
   it("should read as empty a store written in another shape", () => {

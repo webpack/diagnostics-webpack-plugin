@@ -23,6 +23,8 @@ const mock = () => require(eslintPath);
 describe("typed linting between builds", () => {
   /** @type {string} */
   let project;
+  /** @type {string[]} what the last build reported */
+  let reports = [];
   // A write in the same millisecond as the last one is still a write.
   let tick = Date.now() - 60_000;
 
@@ -50,16 +52,17 @@ describe("typed linting between builds", () => {
   /**
    * One build, as a CI run or `webpack` on the command line makes it.
    * @param {object=} options what the check is configured with
-   * @param {{ context?: string, fixable?: number }=} setup where it is built, and whether ESLint finds what `fix` can write
+   * @param {{ context?: string, fixable?: number, report?: string }=} setup where it is built, whether ESLint finds what `fix` can write, and the file it finds an error in
    * @returns {Promise<string[]>} what it linted, by name
    */
   const build = async (
     options = {},
-    { context = project, fixable = 0 } = {},
+    { context = project, fixable = 0, report = "" } = {},
   ) => {
     mock()._reset();
     mock()._readAcrossFiles(true);
     mock()._fixable(fixable);
+    mock()._report(report);
 
     const compiler = webpack({
       context,
@@ -80,8 +83,12 @@ describe("typed linting between builds", () => {
       ],
     });
 
-    await new Promise((resolve, reject) => {
-      compiler.run((err) => (err ? reject(err) : resolve()));
+    reports = await new Promise((resolve, reject) => {
+      compiler.run((err, stats) =>
+        err
+          ? reject(err)
+          : resolve(stats.compilation.errors.map(({ message }) => message)),
+      );
     });
     await new Promise((resolve) => {
       compiler.close(resolve);
@@ -96,6 +103,17 @@ describe("typed linting between builds", () => {
   it("should lint nothing again that nothing it imports has changed", async () => {
     assert.deepStrictEqual(await build(), ["entry.js", "leaf.js", "other.js"]);
     assert.deepStrictEqual(await build(), []);
+  });
+
+  it("should report again what it found in a file it does not lint again", async () => {
+    await build({}, { report: "leaf.js" });
+    assert.strictEqual(reports.length, 1);
+    assert.match(reports[0], /leaf\.js/u);
+
+    // ESLint would find nothing now: what is reported is what was kept.
+    assert.deepStrictEqual(await build(), []);
+    assert.strictEqual(reports.length, 1);
+    assert.match(reports[0], /leaf\.js/u);
   });
 
   it("should lint again a file whose import changed, though it did not", async () => {
