@@ -49,6 +49,10 @@ export type SharedOptions = {
    */
   ignoreDiagnostics?: Ignore | undefined;
   /**
+   * whether what a check reports of one file can turn on another, read from the tool's configuration when left out
+   */
+  readsAcrossFiles?: boolean | undefined;
+  /**
    * what a check reports its results as
    */
   reportAs?: ReportAs | undefined;

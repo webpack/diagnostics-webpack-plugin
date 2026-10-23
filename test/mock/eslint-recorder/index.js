@@ -2,6 +2,9 @@
 const calls = [];
 const built = [];
 let parserOptions = {};
+let fixable = 0;
+let reported = "";
+const fixed = [];
 
 class ESLintMock {
   constructor(options = {}) {
@@ -12,10 +15,28 @@ class ESLintMock {
 
   async lintFiles(files) {
     calls.push(files);
-    return [];
+
+    // One result a file, finding nothing, as ESLint answers: what a check
+    // keeps between builds is kept by the file it came from.
+    return files.map((filePath) => ({
+      filePath,
+      messages:
+        reported && filePath.endsWith(reported)
+          ? [{ ruleId: "typed", severity: 2, message: "found", line: 1 }]
+          : [],
+      suppressedMessages: [],
+      errorCount: reported && filePath.endsWith(reported) ? 1 : 0,
+      fatalErrorCount: 0,
+      warningCount: 0,
+      fixableErrorCount: fixable,
+      fixableWarningCount: 0,
+    }));
   }
 
-  async calculateConfigForFile() {
+  async calculateConfigForFile(file) {
+    // ESLint has no config for a file it ignores.
+    if (file.includes("ignored")) return undefined;
+
     return { languageOptions: { parserOptions } };
   }
 
@@ -25,6 +46,9 @@ class ESLintMock {
 }
 
 ESLintMock.version = "9";
+ESLintMock.outputFixes = async (results) => {
+  fixed.push(results.map(({ filePath }) => filePath));
+};
 
 module.exports = {
   ESLint: ESLintMock,
@@ -37,6 +61,15 @@ module.exports = {
   _readAcrossFiles: (reads) => {
     parserOptions = reads ? { project: "./tsconfig.json" } : {};
   },
+  _fixed: fixed,
+  // Whether every file comes back with something `fix` can write.
+  _fixable: (count) => {
+    fixable = count;
+  },
+  // The file whose result holds an error.
+  _report: (name) => {
+    reported = name;
+  },
   _setVersion: (version) => {
     ESLintMock.version = version;
   },
@@ -44,6 +77,9 @@ module.exports = {
     calls.length = 0;
     built.length = 0;
     parserOptions = {};
+    fixable = 0;
+    reported = "";
+    fixed.length = 0;
     ESLintMock.version = "9";
   },
 };
