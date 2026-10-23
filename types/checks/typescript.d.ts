@@ -5,6 +5,7 @@ declare namespace _default {
   export let filesSource: string;
   export const schema: any;
   export namespace defaults {
+    let cacheLocation: string;
     let extensions: string[];
   }
   export function defaultExclude(): string;
