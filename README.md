@@ -382,9 +382,19 @@ Which file imports which is read with the project's own TypeScript, through the
 drops it before webpack sees it — and this holds for every check, whatever tool
 it runs. A change that could reach files some other way — a declaration file
 nothing imports, a `declare global`, a config file, an import that resolves to
-nothing — lints every file again, as does a project without TypeScript. There,
+nothing (a stylesheet, an image or another asset webpack bundles aside) — lints
+every file again, as does a project without TypeScript. There,
 an ESLint check with `cache: true` written down keeps ESLint's own cache, which
 answers for a file whose import changed from before the change.
+
+A file changed while webpack watches reaches its importers only when what it
+shows them changes: the declarations it emits and what it imports. Edit the
+body of a function or a comment and only that file is linted again — told
+apart by `ts.transpileDeclaration` (TypeScript 5.5 and later), which needs no
+type checker and so answers only for a file whose exports say their own types,
+and only from the second edit of a file on, the first being what it is told
+from. Over three hundred modules in a chain, editing one halfway along took a
+typed-linting rebuild from 1.1–1.4 s to 0.16–0.2 s.
 
 Left out, each check reads it from its tool's configuration:
 
@@ -1019,6 +1029,12 @@ Which kinds of diagnostic to report. Turning one off asks TypeScript for less
 rather than dropping what it answered, so it is also the one filter that saves
 the work — `semantic: false` is what makes a check that only wants syntax errors
 cheap.
+
+`declaration` is asked of a project compiled with `declaration` or `composite`,
+and a rebuild works it out again only for the files a change reached — the ones
+TypeScript type checks again — rather than emitting the declarations of the
+whole program each time: over 300 files, a rebuild went from 360–490 ms to
+150 ms.
 
 ```js
 new DiagnosticsPlugin({

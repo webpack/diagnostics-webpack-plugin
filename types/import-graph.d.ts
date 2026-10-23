@@ -17,7 +17,7 @@ export type Imports = {
    */
   global: boolean;
   /**
-   * the relative imports that resolve to nothing, as written
+   * the relative imports that resolve to nothing, as written, assets included
    */
   missing: string[];
 };
@@ -71,6 +71,10 @@ export type Graph = {
    * each config file and what it extends, hashed, as the signatures were last read under
    */
   configHashes: Map<string, string>;
+  /**
+   * what each file that changed showed the files importing it, as the last change left it, hashed
+   */
+  faces: Map<string, string>;
 };
 /**
  * Which files a change can have changed what typed linting says of: the ones

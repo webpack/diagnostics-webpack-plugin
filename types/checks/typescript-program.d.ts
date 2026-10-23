@@ -31,6 +31,7 @@ export type Held = {
       time: Date;
     }
   >;
+  declarations: Map<string, Diagnostic[]>;
 };
 /**
  * The program the config file describes, with emit off: webpack writes the
