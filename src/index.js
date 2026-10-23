@@ -520,6 +520,9 @@ class DiagnosticsWebpackPlugin {
           ...check,
           /** @type {string[]} */
           files: [],
+          // The same files, to tell one already listed without a search.
+          /** @type {Set<string>} */
+          listed: new Set(),
           pending,
           kept,
           deferred,
@@ -552,15 +555,19 @@ class DiagnosticsWebpackPlugin {
           if (!file) return;
 
           for (const check of fromModules) {
-            const { files, options } = check;
-            const isFileNotListed = !files.includes(file);
-            const isFileWanted =
-              check.isWanted(file) && !check.isExcluded(file);
+            const { files, listed, options } = check;
+
+            // Looked up in a set: every module of the build passes through
+            // here, for every check, and a list would be searched whole.
+            if (listed.has(file)) continue;
+            if (!check.isWanted(file) || check.isExcluded(file)) continue;
+
             const isQueryNotExclude = /** @type {RegExp[]} */ (
               options.resourceQueryExclude
             ).every((reg) => !reg.test(query));
 
-            if (isFileNotListed && isFileWanted && isQueryNotExclude) {
+            if (isQueryNotExclude) {
+              listed.add(file);
               files.push(file);
 
               if (rebuilt) {
