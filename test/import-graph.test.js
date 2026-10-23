@@ -135,6 +135,61 @@ describe("import graph", () => {
       );
     });
 
+    it("should read what a project's own emit drops, which an importer's rules still see", () => {
+      write(
+        "tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            moduleResolution: "bundler",
+            removeComments: true,
+            stripInternal: true,
+          },
+        }),
+      );
+
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "/** @deprecated */\nexport const leaf: number = 2;\n",
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "export const leaf: number = 2;\n/** @internal */\nexport const hidden: number = 1;\n",
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should reach its importers with a TypeScript that cannot say what a file shows", () => {
+      graph = createGraph({ ...ts, transpileDeclaration: undefined });
+
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "// a note\nexport const leaf: number = 2;\n",
+        ),
+        ["leaf.ts", "middle.ts", "top.ts"],
+      );
+    });
+
+    it("should reach the importers of a file that has gone", () => {
+      affected(all, ["leaf.ts"]);
+      rmSync(at("leaf.ts"));
+
+      assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+        "leaf.ts",
+        "middle.ts",
+        "top.ts",
+      ]);
+    });
+
     it("should reach the importers of a quiet file that a loud change reaches", () => {
       write(
         "middle.ts",

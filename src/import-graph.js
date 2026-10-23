@@ -178,29 +178,38 @@ function hashOf(text) {
 function faceOf(graph, file, text, imports) {
   const { ts } = graph;
 
-  if (typeof ts.transpileDeclaration !== "function") return undefined;
-
-  try {
-    const emitted = ts.transpileDeclaration(text, {
-      fileName: file,
-      reportDiagnostics: true,
-      compilerOptions: { ...optionsFor(graph, file), declaration: true },
-    });
-
-    if (emitted.diagnostics && emitted.diagnostics.length > 0) {
-      return undefined;
-    }
-
-    return hashOf(
-      [
-        emitted.outputText,
-        ...imports.resolved.toSorted(),
-        ...imports.missing.toSorted(),
-      ].join("\0"),
-    );
-  } catch {
+  // A declaration file has nothing to emit, and TypeScript refuses to.
+  if (
+    typeof ts.transpileDeclaration !== "function" ||
+    /\.d\.[^/]*ts$/u.test(file)
+  ) {
     return undefined;
   }
+
+  const emitted = ts.transpileDeclaration(text, {
+    fileName: file,
+    reportDiagnostics: true,
+    compilerOptions: {
+      ...optionsFor(graph, file),
+      declaration: true,
+      // What an importer's rules read and a project's own emit may drop: a
+      // `@deprecated` in a comment, an `@internal` export.
+      removeComments: false,
+      stripInternal: false,
+    },
+  });
+
+  if (emitted.diagnostics && emitted.diagnostics.length > 0) {
+    return undefined;
+  }
+
+  return hashOf(
+    [
+      emitted.outputText,
+      ...imports.resolved.toSorted(),
+      ...imports.missing.toSorted(),
+    ].join("\0"),
+  );
 }
 
 /**
