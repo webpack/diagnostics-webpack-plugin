@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import { loadNative } from "../../src/checks/typescript-native.js";
+import {
+  checkNative,
+  loadNative,
+  startNative,
+  stopNative,
+} from "../../src/checks/typescript-native.js";
 
 import pack from "./utils/pack.js";
 
@@ -37,6 +42,39 @@ describe("typescript 7", () => {
       await loadNative(join(import.meta.dirname, "mock/typescript-recorder")),
       undefined,
     );
+  });
+
+  it("should give compilers sharing the process one run at a time", async () => {
+    const context = join(import.meta.dirname, "fixtures", "good");
+    const options = { context };
+    const native = startNative(await loadNative(typescriptPath), options);
+    /** @type {string[]} */
+    const order = [];
+    const snapshot = native.api.updateSnapshot.bind(native.api);
+
+    native.api.updateSnapshot = async (/** @type {unknown} */ change) => {
+      order.push("start");
+
+      const taken = await snapshot(change);
+
+      order.push("taken");
+
+      return taken;
+    };
+
+    try {
+      const [first, second] = await Promise.all([
+        checkNative(native, options, {}),
+        checkNative(native, options, { modifiedFiles: new Set() }),
+      ]);
+
+      assert.deepStrictEqual(first.diagnostics, []);
+      assert.deepStrictEqual(second.diagnostics, []);
+      // The second run takes its snapshot once the first is done with its own.
+      assert.deepStrictEqual(order, ["start", "taken", "start", "taken"]);
+    } finally {
+      await stopNative(native);
+    }
   });
 
   it("should report nothing when the types are right", async () => {

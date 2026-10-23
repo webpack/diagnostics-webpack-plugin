@@ -76,6 +76,7 @@ async function lintFiles(files, stopped) {
 
   return {
     diagnostics,
+    cancelled: Boolean(found.cancelled),
     files: found.files,
     directories: found.directories,
     writes: found.writes,

@@ -282,6 +282,19 @@ async function create({ key, id: entry, options, compilation }) {
 
         const found = await answer;
 
+        // A stopped run found nothing a later rebuild can be answered with.
+        if (found.cancelled) {
+          runs.delete(id);
+          ({ read, directories, writes, missing } = {
+            read: found.files,
+            directories: found.directories,
+            writes: found.writes,
+            missing: found.missing,
+          });
+
+          return [];
+        }
+
         return remember(
           {
             diagnostics: found.diagnostics,

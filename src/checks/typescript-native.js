@@ -21,7 +21,7 @@ import { getTypeScriptOptions } from "./typescript-program.js";
  */
 /**
  * A client of the native compiler and what it last saw of the project.
- * @typedef {{ api: EXPECTED_ANY, error: number, snapshot: EXPECTED_ANY, files: Set<string> }} Native
+ * @typedef {{ api: EXPECTED_ANY, error: number, snapshot: EXPECTED_ANY, files: Set<string>, turn: Promise<void> }} Native
  */
 
 const nodeRequire = createRequire(import.meta.url);
@@ -195,14 +195,13 @@ function changesSince(native, compiler) {
 }
 
 /**
- * Checks the program the config file describes with the native compiler, which
- * runs in a process of its own: webpack's thread only waits for the answer.
+ * One run of `checkNative`, with the snapshot to itself.
  * @param {Native} native the client and what it last saw
  * @param {Options} options the options the check was configured with
  * @param {EXPECTED_ANY} compiler the compiler the check runs for
  * @returns {Promise<{ diagnostics: Described[], files: string[], directories: string[] }>} what it found, and what it read to find it
  */
-async function checkNative(native, options, compiler) {
+async function checkOnce(native, options, compiler) {
   const cannot = unsupported(options);
 
   if (cannot) {
@@ -305,6 +304,27 @@ async function checkNative(native, options, compiler) {
 }
 
 /**
+ * Checks the program the config file describes with the native compiler, which
+ * runs in a process of its own: webpack's thread only waits for the answer.
+ * @param {Native} native the client and what it last saw
+ * @param {Options} options the options the check was configured with
+ * @param {EXPECTED_ANY} compiler the compiler the check runs for
+ * @returns {Promise<{ diagnostics: Described[], files: string[], directories: string[] }>} what it found, and what it read to find it
+ */
+function checkNative(native, options, compiler) {
+  // Compilers sharing the process take turns: a run replaces the snapshot and
+  // disposes of the last, which another run may still be reading.
+  const run = native.turn.then(() => checkOnce(native, options, compiler));
+
+  native.turn = run.then(
+    () => {},
+    () => {},
+  );
+
+  return run;
+}
+
+/**
  * Starts a client of the native compiler, which spawns a process of its own.
  * @param {EXPECTED_ANY} loaded what `loadNative` loaded
  * @param {Options} options the options the check was configured with
@@ -316,6 +336,7 @@ function startNative(loaded, options) {
     error: loaded.DiagnosticCategory.Error,
     snapshot: undefined,
     files: new Set(),
+    turn: Promise.resolve(),
   };
 }
 

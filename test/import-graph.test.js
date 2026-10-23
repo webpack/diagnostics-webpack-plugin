@@ -212,6 +212,15 @@ describe("import graph", () => {
     });
   });
 
+  it("should resolve as a bundler does where no config file covers a directory", () => {
+    rmSync(at("tsconfig.json"));
+
+    assert.deepStrictEqual(
+      affected(["top.ts", "middle.ts", "alone.ts"], ["leaf.ts"]),
+      ["middle.ts", "top.ts"],
+    );
+  });
+
   it("should follow a type-only import, which a bundler drops", () => {
     assert.deepStrictEqual(affected(all, ["types.ts"]), [
       "typed.ts",
