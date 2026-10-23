@@ -904,8 +904,9 @@ which files webpack saw change. What it prints is what `tsc --pretty` prints.
 
 It checks the project as its config file describes it, so [`build`](#build), a
 [`mode`](#mode) that writes, and compiler options written in the plugin are
-reported as unsupported rather than ignored. Write them in the config file
-instead.
+reported as unsupported rather than ignored. Compiler options belong in the
+`tsconfig.json` instead; `build` and a writing `mode` have no TypeScript 7
+counterpart.
 
 Over 600 files, a one-shot build with the check went from 3.5 s to 1.4–1.5 s
 next to TypeScript 6, and webpack's own process from 6.4 to 0.6–0.8 s of CPU and
