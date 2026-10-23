@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 
@@ -108,6 +109,25 @@ describe("typescript 7", () => {
       assert.match(message, /TypeScript 7/u);
       assert.match(message, named);
     }
+  });
+
+  it("should say there is no config file to read", async () => {
+    // Outside this repository, whose own config file the search would find.
+    const context = mkdtempSync(join(tmpdir(), "typescript-7-"));
+
+    writeFileSync(join(context, "index.js"), "export default 1;\n");
+    writeFileSync(join(context, "checked.ts"), "export const fine = 1;\n");
+
+    const stats = await pack(
+      "good",
+      { typescriptPath },
+      { context, output: { path: join(context, "dist") } },
+    ).runAsync();
+
+    assert.match(
+      stats.compilation.errors[0].message,
+      /no 'tsconfig\.json' was found above/u,
+    );
   });
 
   it("should check again what a rebuild changed", (t, done) => {

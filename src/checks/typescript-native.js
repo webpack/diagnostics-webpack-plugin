@@ -93,9 +93,6 @@ function findConfigFile(options) {
 
     if (existsSync(candidate)) return candidate;
 
-    // Unreachable from the suite: every fixture sits under this repository's
-    // own config, which the search finds on its way up.
-    /* istanbul ignore next */
     if (dirname(directory) === directory) {
       throw new Error(
         `no 'tsconfig.json' was found above '${context}', and none was named by 'configFile'.`,
@@ -121,7 +118,7 @@ function flatten(diagnostic) {
  * @param {NativeDiagnostic} diagnostic one of what a run found
  * @param {number} error what the native compiler numbers an error
  * @param {string} context what the file is named relative to
- * @param {Map<string, string>} texts the source of each file, read once
+ * @param {Map<string, string>} texts the text each file was checked as
  * @returns {string} the diagnostic, formatted
  */
 function format(diagnostic, error, context, texts) {
@@ -131,18 +128,7 @@ function format(diagnostic, error, context, texts) {
 
   if (!diagnostic.fileName) return `${head}\n`;
 
-  let text = texts.get(diagnostic.fileName);
-
-  if (text === undefined) {
-    try {
-      text = readFileSync(diagnostic.fileName, "utf8");
-    } catch /* istanbul ignore next */ {
-      // Deleted since it was checked: the next rebuild says so.
-      text = "";
-    }
-
-    texts.set(diagnostic.fileName, text);
-  }
+  const text = texts.get(diagnostic.fileName) || "";
 
   const before = text.slice(0, diagnostic.pos).split(/\r?\n/u);
   const line = before.length;
@@ -180,11 +166,10 @@ function changesSince(native, compiler) {
       continue;
     }
 
-    try {
-      if (statSync(file).isFile()) created.push(file);
-    } catch /* istanbul ignore next */ {
-      // Gone again, which is what `removedFiles` says.
-    }
+    // Gone again, which is what `removedFiles` says, or a folder.
+    const stat = statSync(file, { throwIfNoEntry: false });
+
+    if (stat && stat.isFile()) created.push(file);
   }
 
   return {
@@ -248,8 +233,27 @@ async function checkNative(native, options, compiler) {
       : [],
     kinds.semantic ? program.getSemanticDiagnostics() : [],
   ]);
+  // The text each file was checked as, which is what the line under a
+  // diagnostic is printed from, rather than what is on disk by now.
+  const named = new Set(
+    found
+      .flat()
+      .flatMap((diagnostic) =>
+        diagnostic.fileName ? [diagnostic.fileName] : [],
+      ),
+  );
   /** @type {Map<string, string>} */
-  const texts = new Map();
+  const texts = new Map(
+    await Promise.all(
+      [...named].map(
+        async (fileName) =>
+          /** @type {[string, string]} */ ([
+            fileName,
+            ((await program.getSourceFile(fileName)) || { text: "" }).text,
+          ]),
+      ),
+    ),
+  );
   /** @type {Set<string>} */
   const seen = new Set();
   /** @type {Described[]} */
