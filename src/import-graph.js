@@ -39,6 +39,7 @@ import { toPosixPath } from "./utils.js";
  * @property {Map<string, EXPECTED_ANY>} options the compiler options of each config file
  * @property {Map<string, Read>} reads every file read for a signature, as it was read
  * @property {Map<string, string>} configHashes each config file and what it extends, hashed, as the signatures were last read under
+ * @property {Map<string, string>} faces what each file that changed showed the files importing it, as the last change left it, hashed
  */
 
 // What the options of a directory no config file covers are taken as: what a
@@ -57,6 +58,7 @@ function createGraph(ts) {
     options: new Map(),
     reads: new Map(),
     configHashes: new Map(),
+    faces: new Map(),
   };
 }
 
@@ -153,6 +155,64 @@ function readImports(graph, file) {
 }
 
 /**
+ * @param {string} text what to hash
+ * @returns {string} its hash
+ */
+function hashOf(text) {
+  return createHash("sha1").update(text).digest("hex");
+}
+
+/**
+ * What a file shows the files importing it: the declarations it emits, and
+ * what it imports, which a rule following imports across files reads. Read
+ * with `transpileDeclaration`, which needs no type checker and so answers only
+ * for a file whose exports say their own types; for any other file, for a
+ * TypeScript older than 5.5, and for what does not parse as TypeScript at all,
+ * there is no answer.
+ * @param {Graph} graph the graph
+ * @param {string} file the file, as a posix path
+ * @param {string} text what it holds
+ * @param {Imports} imports what it imports
+ * @returns {string | undefined} it, hashed, or nothing where it cannot be said
+ */
+function faceOf(graph, file, text, imports) {
+  const { ts } = graph;
+
+  // A declaration file has nothing to emit, and TypeScript refuses to.
+  if (
+    typeof ts.transpileDeclaration !== "function" ||
+    /\.d\.[^/]*ts$/u.test(file)
+  ) {
+    return undefined;
+  }
+
+  const emitted = ts.transpileDeclaration(text, {
+    fileName: file,
+    reportDiagnostics: true,
+    compilerOptions: {
+      ...optionsFor(graph, file),
+      declaration: true,
+      // What an importer's rules read and a project's own emit may drop: a
+      // `@deprecated` in a comment, an `@internal` export.
+      removeComments: false,
+      stripInternal: false,
+    },
+  });
+
+  if (emitted.diagnostics && emitted.diagnostics.length > 0) {
+    return undefined;
+  }
+
+  return hashOf(
+    [
+      emitted.outputText,
+      ...imports.resolved.toSorted(),
+      ...imports.missing.toSorted(),
+    ].join("\0"),
+  );
+}
+
+/**
  * Which files a change can have changed what typed linting says of: the ones
  * that changed, and every file importing one of them, however indirectly. A
  * typed rule reads a type only through the files TypeScript resolves, so the
@@ -171,9 +231,16 @@ function affectedFiles(graph, files, changed) {
     graph.files.clear();
     graph.configs.clear();
     graph.options.clear();
+    graph.faces.clear();
 
     return undefined;
   }
+
+  // The files whose change shows the files importing them nothing new: an
+  // edit to the body of a function, a comment. Linted again themselves, but
+  // what imports them is not, for what this edit did.
+  /** @type {Set<string>} */
+  const quiet = new Set();
 
   for (const file of touched) {
     const before = graph.files.get(file);
@@ -183,6 +250,27 @@ function affectedFiles(graph, files, changed) {
     if (before && (before.global || before.unresolved)) return undefined;
 
     graph.files.delete(file);
+
+    const text = graph.ts.sys.readFile(file);
+
+    if (text === undefined) {
+      graph.faces.delete(file);
+      continue;
+    }
+
+    const imports = importsOf(graph, file, text);
+    const was = graph.faces.get(file);
+    // Only a file that changed is read for it: the first edit of a file is
+    // taken to reach everything importing it, and the next ones are told from
+    // what it showed after that one.
+    const face = faceOf(graph, file, text, imports);
+
+    graph.files.set(file, imports);
+
+    if (face === undefined) graph.faces.delete(file);
+    else graph.faces.set(file, face);
+
+    if (was !== undefined && was === face) quiet.add(file);
   }
 
   /** @type {Map<string, string[]>} */
@@ -219,13 +307,26 @@ function affectedFiles(graph, files, changed) {
 
   /** @type {Set<string>} */
   const reached = new Set();
-  const queue = [...touched];
+  /** @type {Set<string>} */
+  const spread = new Set();
+  // Each file with whether what it shows can have changed. A quiet file
+  // reached through something it imports is not quiet any more: it can show
+  // a changed type through an `export *` or a type it names.
+  /** @type {[string, boolean][]} */
+  const queue = touched.map((file) => [file, !quiet.has(file)]);
 
-  for (let file = queue.pop(); file !== undefined; file = queue.pop()) {
-    if (reached.has(file)) continue;
+  for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
+    const [file, loud] = next;
 
     reached.add(file);
-    queue.push(...(importers.get(file) || []));
+
+    if (!loud || spread.has(file)) continue;
+
+    spread.add(file);
+
+    for (const importer of importers.get(file) || []) {
+      queue.push([importer, true]);
+    }
   }
 
   return new Set([...reached].filter((file) => covered.has(file)));
@@ -279,14 +380,6 @@ function getGraph(compiler, context, owner) {
   }
 
   return graph;
-}
-
-/**
- * @param {string} text what to hash
- * @returns {string} its hash
- */
-function hashOf(text) {
-  return createHash("sha1").update(text).digest("hex");
 }
 
 /**
