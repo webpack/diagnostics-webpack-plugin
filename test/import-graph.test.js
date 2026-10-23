@@ -205,6 +205,22 @@ describe("the graph a compiler keeps", () => {
 
     assert.strictEqual(await getGraph({}, project), undefined);
   });
+
+  it("should be nothing for a project whose TypeScript has no API to read imports with", async (t) => {
+    // As TypeScript 7 is: a native compiler whose package exports a version.
+    const project = mkdtempSync(join(tmpdir(), "native-typescript-"));
+    const native = join(project, "node_modules", "typescript");
+
+    t.after(() => rmSync(project, { recursive: true, force: true }));
+    mkdirSync(native, { recursive: true });
+    writeFileSync(join(native, "package.json"), '{ "main": "index.js" }');
+    writeFileSync(
+      join(native, "index.js"),
+      'module.exports = { version: "7.0.0", versionMajorMinor: "7.0" };\n',
+    );
+
+    assert.strictEqual(await getGraph({}, project), undefined);
+  });
 });
 
 describe("signatures", () => {

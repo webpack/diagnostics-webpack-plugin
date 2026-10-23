@@ -380,7 +380,8 @@ Which file imports which is read with the project's own TypeScript, through the
 drops it before webpack sees it — and this holds for every check, whatever tool
 it runs. A change that could reach files some other way — a declaration file
 nothing imports, a `declare global`, a config file, an import that resolves to
-nothing — lints every file again, as does a project without TypeScript. There,
+nothing — lints every file again, as does a project without TypeScript, or with
+TypeScript 7, whose native compiler has no API to read imports through. There,
 an ESLint check with `cache: true` written down keeps ESLint's own cache, which
 answers for a file whose import changed from before the change.
 

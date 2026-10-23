@@ -267,7 +267,19 @@ function getGraph(compiler, context, owner) {
           ).href
         );
 
-        return createGraph(loaded.default || loaded);
+        const ts = loaded.default || loaded;
+
+        // TypeScript 7 is a native compiler whose package exports no such
+        // API: what a file imports cannot be read through it.
+        if (
+          typeof ts.preProcessFile !== "function" ||
+          typeof ts.resolveModuleName !== "function" ||
+          !ts.sys
+        ) {
+          return undefined;
+        }
+
+        return createGraph(ts);
       } catch {
         // Without a TypeScript of the project's own there is nothing to say
         // which file reads which, and every file is linted again instead.
