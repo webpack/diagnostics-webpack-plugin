@@ -190,6 +190,64 @@ describe("incremental", () => {
       });
     };
 
+    /**
+     * Rebuilds after an edit to the leaf with `lintDependentsAfterBuild` set,
+     * and says what was linted during the build and after it.
+     * @param {object} options plugin options
+     * @param {() => void} done done
+     */
+    const afterBuild = (options, done) => {
+      writeThree();
+
+      let first = true;
+
+      watch = pack("watch", {
+        eslintPath,
+        lintDependentsAfterBuild: true,
+        ...options,
+      }).watch({}, (err) => {
+        assert.strictEqual(err, null);
+
+        if (first) {
+          first = false;
+          require(eslintPath)._reset();
+          require(eslintPath)._readAcrossFiles(true);
+          writeFileSync(leaf, "const leaf = 2;\n");
+
+          return;
+        }
+
+        // The build waits only for what changed.
+        const during = linted();
+
+        assert.strictEqual(during.length, 1);
+        assert.match(during[0], /watch-leaf\.js/u);
+
+        // What the change reaches is linted once the build is over, and what
+        // it does not reach is not linted at all.
+        setTimeout(() => {
+          rmSync(other, { force: true });
+
+          const after = linted();
+
+          assert.ok(after.some((file) => /watch-entry\.js/u.test(file)));
+          assert.ok(after.every((file) => !/watch-other\.js/u.test(file)));
+          done();
+        }, 500);
+      });
+    };
+
+    it("should lint after the build only what a change reaches among the modules when told to", (t, done) => {
+      afterBuild({}, done);
+    });
+
+    it("should lint after the build only what a change reaches among the files it globs when told to", (t, done) => {
+      afterBuild(
+        { files: ["watch-entry.js", "watch-leaf.js", "watch-other.js"] },
+        done,
+      );
+    });
+
     it("should lint again what a change reaches among the files it globs", (t, done) => {
       writeThree();
       rebuild(
@@ -201,6 +259,68 @@ describe("incremental", () => {
         done,
       );
     });
+  });
+
+  it("should lint what did not change after the build when told to", (t, done) => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    // Written well before the watch starts, or its first rebuild counts them as
+    // changed along with the edit.
+    const past = new Date(Date.now() - 60_000);
+
+    for (const file of [entry, leaf]) utimesSync(file, past, past);
+
+    // eslint-disable-next-line no-use-before-define
+    let next = firstPass;
+    const compiler = pack("watch", {
+      eslintPath,
+      lintDependentsAfterBuild: true,
+    });
+
+    watch = compiler.watch({}, (err, stats) => next(err, stats));
+
+    function secondPass(err) {
+      assert.strictEqual(err, null);
+
+      // The build waited only for what it rebuilt.
+      const during = linted();
+
+      assert.strictEqual(during.length, 1);
+      assert.match(during[0], /watch-leaf\.js/u);
+
+      // The rest is linted once it is over.
+      setTimeout(() => {
+        assert.ok(linted().some((file) => /watch-entry\.js/u.test(file)));
+        done();
+      }, 500);
+    }
+
+    function firstPass(err) {
+      assert.strictEqual(err, null);
+      assert.strictEqual(linted().length, 2);
+
+      require(eslintPath)._reset();
+      require(eslintPath)._readAcrossFiles(true);
+      next = secondPass;
+      writeFileSync(leaf, "const leaf = 2;\n");
+    }
+  });
+
+  it("should lint everything with a build that is not watched, even when told to wait", async () => {
+    writeFileSync(leaf, "const leaf = 1;\n");
+    writeFileSync(entry, "require('./watch-leaf');\nconst entry = 1;\n");
+    require(eslintPath)._reset();
+    require(eslintPath)._readAcrossFiles(true);
+
+    await pack("watch", {
+      eslintPath,
+      lintDependentsAfterBuild: true,
+    }).runAsync();
+
+    assert.strictEqual(linted().length, 2);
   });
 
   it("should turn the tool's cache off where a rule reads other files", (t, done) => {

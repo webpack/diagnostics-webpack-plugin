@@ -4,9 +4,10 @@
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { keptFor } from "./compiler-state.js";
 import { toPosixPath } from "./utils.js";
 
 /** @typedef {EXPECTED_ANY} TypeScript */
@@ -41,15 +42,51 @@ import { toPosixPath } from "./utils.js";
  * @property {Map<string, string>} configHashes each config file and what it extends, hashed, as the signatures were last read under
  * @property {Map<EXPECTED_ANY, EXPECTED_ANY>} resolutions what each set of compiler options resolved this pass, so that every file in a folder does not look its imports up again
  * @property {Map<string, string>} faces what each file that changed showed the files importing it, as the last change left it, hashed
+ * @property {Set<string> | undefined} scripts what a file TypeScript reads ends in, read from it once
+ * @property {EXPECTED_ANY} fallback the options of a directory no config file covers
  */
 
-// What a file webpack bundles and TypeScript has no types for ends in.
-const ASSET =
-  /\.(?:css|scss|sass|less|styl|stylus|pcss|postcss|svg|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|woff2?|ttf|otf|eot|txt|md|html?|wasm|mp4|webm|mp3|wav|ogg|flac|aac)(?:\?.*)?$/iu;
+/**
+ * What the options of a directory no config file covers are taken as: what a
+ * bundler resolves, JavaScript included. One object, which is what the
+ * resolutions of a pass are kept against.
+ * @param {Graph} graph the graph
+ * @returns {EXPECTED_ANY} the options
+ */
+function fallbackOptions(graph) {
+  if (!graph.fallback) {
+    graph.fallback = {
+      allowJs: true,
+      moduleResolution: graph.ts.ModuleResolutionKind.Bundler,
+    };
+  }
 
-// What the options of a directory no config file covers are taken as: what a
-// bundler resolves, JavaScript included.
-const FALLBACK_OPTIONS = { allowJs: true, moduleResolution: 100 };
+  return graph.fallback;
+}
+
+/**
+ * Whether an import names a file TypeScript has no types for — a stylesheet,
+ * an image — which webpack bundles and no file written later turns into a
+ * type. What counts as a script is TypeScript's to say, so a kind of asset
+ * no one listed is still one.
+ * @param {Graph} graph the graph
+ * @param {string} fileName what the import names
+ * @returns {boolean} whether it names an asset
+ */
+function isAsset(graph, fileName) {
+  const extension = extname(fileName.split("?")[0]).toLowerCase();
+
+  if (extension === "") return false;
+
+  if (!graph.scripts) {
+    graph.scripts = new Set([
+      ...graph.ts.getSupportedExtensions({ allowJs: true }).flat(),
+      graph.ts.Extension.Json,
+    ]);
+  }
+
+  return !graph.scripts.has(extension);
+}
 
 /**
  * @param {TypeScript} ts the TypeScript the imports are resolved with
@@ -65,6 +102,8 @@ function createGraph(ts) {
     configHashes: new Map(),
     resolutions: new Map(),
     faces: new Map(),
+    scripts: undefined,
+    fallback: undefined,
   };
 }
 
@@ -88,7 +127,7 @@ function optionsFor(graph, file) {
 
   const config = graph.configs.get(directory);
 
-  if (!config) return FALLBACK_OPTIONS;
+  if (!config) return fallbackOptions(graph);
 
   if (!graph.options.has(config)) {
     const parsed = ts.getParsedCommandLineOfConfigFile(
@@ -97,7 +136,7 @@ function optionsFor(graph, file) {
       { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} },
     );
 
-    graph.options.set(config, parsed ? parsed.options : FALLBACK_OPTIONS);
+    graph.options.set(config, parsed ? parsed.options : fallbackOptions(graph));
   }
 
   return graph.options.get(config);
@@ -163,7 +202,7 @@ function importsOf(graph, file, text) {
       resolved.push(toPosixPath(resolve(found.resolvedFileName)));
     } else if (!fileName.startsWith(".")) {
       continue;
-    } else if (ASSET.test(fileName) && !options.allowArbitraryExtensions) {
+    } else if (isAsset(graph, fileName) && !options.allowArbitraryExtensions) {
       // A stylesheet or an image is a module to webpack and nothing to
       // TypeScript, which no file written later turns into a type — unless
       // `allowArbitraryExtensions` reads one through a `.d.css.ts` beside it.
@@ -382,14 +421,6 @@ function affectedFiles(graph, files, changed) {
 }
 
 /**
- * The graphs a compiler keeps, one per check. A graph is changed by every
- * question asked of it — what changed is dropped from it, and a changed config
- * empties it — so two checks sharing one would each see the other's answer.
- * @type {WeakMap<EXPECTED_ANY, Map<string, Promise<Graph | undefined>>>}
- */
-const graphsByCompiler = new WeakMap();
-
-/**
  * The graph a compiler keeps for one check, read with the TypeScript the
  * check's project installs — the one its own tooling resolves imports with.
  * @param {EXPECTED_ANY} compiler the compiler the graph lives as long as
@@ -398,37 +429,33 @@ const graphsByCompiler = new WeakMap();
  * @returns {Promise<Graph | undefined>} the graph, or nothing without a TypeScript to read it with
  */
 function getGraph(compiler, context, owner) {
-  let graphs = graphsByCompiler.get(compiler);
+  return keptFor(compiler, `graph\0${owner}\0${context}`, async () => {
+    try {
+      const loaded = await import(
+        pathToFileURL(
+          createRequire(join(context, "package.json")).resolve("typescript"),
+        ).href
+      );
 
-  if (!graphs) {
-    graphs = new Map();
-    graphsByCompiler.set(compiler, graphs);
-  }
+      const ts = loaded.default || loaded;
 
-  const key = `${owner}\0${context}`;
-  let graph = graphs.get(key);
-
-  if (!graph) {
-    graph = (async () => {
-      try {
-        const loaded = await import(
-          pathToFileURL(
-            createRequire(join(context, "package.json")).resolve("typescript"),
-          ).href
-        );
-
-        return createGraph(loaded.default || loaded);
-      } catch {
-        // Without a TypeScript of the project's own there is nothing to say
-        // which file reads which, and every file is linted again instead.
+      // TypeScript 7 is a native compiler whose package exports no such
+      // API: what a file imports cannot be read through it.
+      if (
+        typeof ts.preProcessFile !== "function" ||
+        typeof ts.resolveModuleName !== "function" ||
+        !ts.sys
+      ) {
         return undefined;
       }
-    })();
 
-    graphs.set(key, graph);
-  }
-
-  return graph;
+      return createGraph(ts);
+    } catch {
+      // Without a TypeScript of the project's own there is nothing to say
+      // which file reads which, and every file is linted again instead.
+      return undefined;
+    }
+  });
 }
 
 /**
