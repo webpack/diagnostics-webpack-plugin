@@ -4,7 +4,7 @@
 import { createRequire } from "node:module";
 
 import { countThreads, createSolo } from "../threads.js";
-import { importFrom } from "../utils.js";
+import { importFrom, toPosixPath } from "../utils.js";
 
 import { check, describe, getHeld, getSchemas } from "./typescript-program.js";
 
@@ -24,7 +24,47 @@ export { getTypeScriptOptions } from "./typescript-program.js";
  * @typedef {{ file?: string, code: string, severity: string, text: string, formatted: string }} Described
  */
 
+/**
+ * What a run of the check found, and what it read to find it.
+ * @typedef {object} Run
+ * @property {EXPECTED_ANY[]} diagnostics what it found
+ * @property {EXPECTED_ANY} host the host that formats what it found, on this thread
+ * @property {string[]} read the files a watcher follows for it
+ * @property {string[]} directories the directories a watcher follows for it
+ * @property {string[]} writes what it writes
+ * @property {string[]} missing the paths an import resolved to nothing through
+ * @property {Set<string>} reads every path it read or looked for, as posix paths
+ * @property {string[]} folders where a file the program does not hold yet would be found, as posix paths ending in a slash
+ */
+
 const nodeRequire = createRequire(import.meta.url);
+
+// What a file the config file's `include` would pick up ends in.
+const SCRIPT = /\.(?:[cm]?[jt]sx?|json)$/u;
+
+/** @type {WeakMap<EXPECTED_ANY, Map<string, Run>>} */
+const runsByCompiler = new WeakMap();
+
+/**
+ * Whether a rebuild can have changed what the program says: a file it read or
+ * looked for changed or went, or a script appeared where its config file would
+ * pick it up. What webpack rebuilds for a stylesheet or an image is none of
+ * them.
+ * @param {Run} run what the last run read
+ * @param {string[]} changed what webpack saw change or go since
+ * @returns {boolean} whether the program has to be asked again
+ */
+function reaches(run, changed) {
+  return changed.some((path) => {
+    const file = toPosixPath(path);
+
+    return (
+      run.reads.has(file) ||
+      (SCRIPT.test(file) &&
+        run.folders.some((folder) => file.startsWith(folder)))
+    );
+  });
+}
 
 /** @type {WeakMap<EXPECTED_ANY, Map<string, Solo>>} */
 const workersByCompiler = new WeakMap();
@@ -142,32 +182,83 @@ async function create({ key, id: entry, options, compilation }) {
   const saying = (one) =>
     one.formatted === undefined ? describe(typescript, one) : one;
 
+  const { compiler } = compilation;
+  /** @type {Map<string, Run>} */
+  const runs = runsByCompiler.get(compiler) || new Map();
+
+  runsByCompiler.set(compiler, runs);
+
+  /**
+   * @param {Omit<Run, "reads" | "folders">} found what this run found and read
+   * @param {string[]} seen every path the program asked for
+   * @returns {EXPECTED_ANY[]} what it found
+   */
+  const remember = (found, seen) => {
+    ({ host, read, directories, writes, missing } = found);
+    runs.set(id, {
+      ...found,
+      reads: new Set(
+        [...read, ...seen, ...missing].map((file) => toPosixPath(file)),
+      ),
+      folders: directories.map(
+        (directory) => `${toPosixPath(directory).replace(/\/$/u, "")}/`,
+      ),
+    });
+
+    return found.diagnostics;
+  };
+
   return {
     async lintFiles() {
       if (checked) return [];
 
       checked = true;
 
+      // A rebuild nothing the program reads took part in is answered with what
+      // the last run found, without parsing the config file, reading the
+      // state of every file and building the program again to learn that.
+      const last = runs.get(id);
+      const { modifiedFiles, removedFiles } = compiler;
+
+      if (
+        last &&
+        modifiedFiles &&
+        !reaches(last, [...modifiedFiles, ...(removedFiles || [])])
+      ) {
+        ({ host, read, directories, writes, missing } = last);
+
+        return last.diagnostics;
+      }
+
       if (worker) {
         const found = await worker.lintFiles();
 
-        read = found.files;
-        directories = found.directories;
-        writes = found.writes;
-        missing = found.missing;
-
-        return found.diagnostics;
+        return remember(
+          {
+            diagnostics: found.diagnostics,
+            host: undefined,
+            read: found.files,
+            directories: found.directories,
+            writes: found.writes,
+            missing: found.missing,
+          },
+          found.seen,
+        );
       }
 
       const found = check(typescript, options, held);
 
-      host = found.host;
-      read = found.files;
-      directories = found.directories;
-      writes = found.writes;
-      missing = [...held.missing];
-
-      return found.diagnostics;
+      return remember(
+        {
+          diagnostics: found.diagnostics,
+          host: found.host,
+          read: found.files,
+          directories: found.directories,
+          writes: found.writes,
+          missing: [...held.missing],
+        },
+        [...held.seen],
+      );
     },
     readFiles() {
       return read;
@@ -226,7 +317,10 @@ async function create({ key, id: entry, options, compilation }) {
     // A build that has no next one keeps no program, and a worker left running
     // would hold the process open after webpack is done with it.
     async cleanup() {
-      if (!worker || compilation.compiler.watchMode) return;
+      // What a one-shot build found is of no use to a build after it.
+      if (!compiler.watchMode) runs.delete(id);
+
+      if (!worker || compiler.watchMode) return;
 
       dropWorker(compilation.compiler, id);
 

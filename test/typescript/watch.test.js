@@ -17,6 +17,8 @@ const configFile = join(fixture, "tsconfig.json");
 // Something webpack does build, so that a rebuild can be asked for without
 // touching the files under test.
 const trigger = join(fixture, "trigger.js");
+// What webpack builds and the program never reads, as a stylesheet is.
+const note = join(fixture, "note.txt");
 
 /**
  * @param {boolean} strict whether the project is checked strictly
@@ -55,6 +57,7 @@ describe("watch", () => {
     rmSync(dependent, { force: true });
     rmSync(configFile, { force: true });
     rmSync(trigger, { force: true });
+    rmSync(note, { force: true });
   });
 
   it("should rebuild when a file only the program holds changes", (t, done) => {
@@ -127,6 +130,71 @@ describe("watch", () => {
         false,
         true,
       ]);
+      done();
+    });
+  });
+
+  it("should answer a rebuild nothing the program reads took part in from the last run", (t, done) => {
+    writeConfig(true);
+    writeFileSync(note, "one\n");
+    writeFileSync(trigger, 'import "./note.txt";\n');
+    writeFileSync(orphan, "export const wrong: string = 42;\n");
+
+    const compiler = pack(
+      "watch",
+      { threads: false, typescriptPath },
+      { module: { rules: [{ test: /\.txt$/u, type: "asset/source" }] } },
+    );
+    let step = 0;
+    let built = 0;
+
+    require(typescriptPath)._reset();
+
+    watch = compiler.watch({}, (err, stats) => {
+      assert.strictEqual(err, null);
+
+      const programs = require(typescriptPath)._programs.length;
+
+      const changed = [...(stats.compilation.compiler.modifiedFiles || [])];
+
+      if (step === 0) {
+        // A rebuild webpack starts for what was written before it watched.
+        if (changed.length > 0) return;
+
+        step = 1;
+        built = programs;
+        writeFileSync(note, "two\n");
+
+        return;
+      }
+
+      if (step === 1) {
+        // Webpack names the folder that holds it too, which the program
+        // watches for a file appearing in it.
+        const others = changed.filter((file) => file !== fixture);
+
+        if (others.length !== 1 || others[0] !== note) {
+          // A rebuild for what was written before the watch, late: the edit
+          // is made again from where that one left the program.
+          built = programs;
+          writeFileSync(note, `${Date.now()}\n`);
+
+          return;
+        }
+
+        assert.strictEqual(programs, built, "no program was built for it");
+        // What the last run found is reported again.
+        assert.match(stats.compilation.errors[0].message, /orphan\.ts/u);
+
+        step = 2;
+        writeFileSync(orphan, "export const wrong: number = 42;\n");
+
+        return;
+      }
+
+      if (stats.hasErrors()) return;
+
+      assert.ok(programs > built, "an edit the program reads builds one");
       done();
     });
   });

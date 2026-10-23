@@ -31,6 +31,43 @@ export type Described = {
   formatted: string;
 };
 /**
+ * What a run of the check found, and what it read to find it.
+ */
+export type Run = {
+  /**
+   * what it found
+   */
+  diagnostics: EXPECTED_ANY[];
+  /**
+   * the host that formats what it found, on this thread
+   */
+  host: EXPECTED_ANY;
+  /**
+   * the files a watcher follows for it
+   */
+  read: string[];
+  /**
+   * the directories a watcher follows for it
+   */
+  directories: string[];
+  /**
+   * what it writes
+   */
+  writes: string[];
+  /**
+   * the paths an import resolved to nothing through
+   */
+  missing: string[];
+  /**
+   * every path it read or looked for, as posix paths
+   */
+  reads: Set<string>;
+  /**
+   * where a file the program does not hold yet would be found, as posix paths ending in a slash
+   */
+  folders: string[];
+};
+/**
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} typescript check
  */
