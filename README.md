@@ -1053,6 +1053,41 @@ since a solution is built rather than asked kind by kind.
 `fork-ts-checker-webpack-plugin` spells this option the same way, with
 `semantic` alone on by default.
 
+## Making it faster
+
+Most of what a check costs is its tool's, and a few settings outside the
+plugin decide how much of it is paid again. Each was measured on four cores.
+
+**`skipLibCheck` for the TypeScript check.** Type checking every declaration
+file the program reads is most of a first build; see
+[TypeScript](#typescript).
+
+**`cacheStrategy: "content"` where CI restores the cache.** ESLint keys its
+cache on each file's time and size by default, and a fresh checkout gives every
+file a new time, so a cache restored in CI answers for nothing. Keyed on what
+the files hold, it does:
+
+```js
+new DiagnosticsPlugin({
+  checks: [{ use: "eslint", cacheStrategy: "content" }],
+});
+```
+
+Over 1,500 files, a build after touching every one of them took 9.9 s with the
+default and 5.9 s with `content`, the same as a build with nothing touched.
+Typed linting keeps its results against what files hold already.
+
+**`NODE_COMPILE_CACHE` for Node 22.1 and later.** ESLint, typescript-eslint
+and TypeScript are a lot of JavaScript for Node to compile on every start;
+the environment variable keeps what it compiled on disk:
+
+```sh
+NODE_COMPILE_CACHE=node_modules/.cache/node-compile webpack
+```
+
+A typed-linting build of three hundred modules that found its results in the
+cache went from 2.34–2.60 s and 3.7–4.0 s of CPU to 2.18–2.20 s and 3.5–3.6 s.
+
 ## Adding a check
 
 A `use` may also be an adapter of its own rather than a built-in name, so a check can ship as its own package without an entry in this one:
