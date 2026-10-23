@@ -782,6 +782,10 @@ new DiagnosticsPlugin({ checks: ["biome"] });
 Like the oxlint check this runs a binary and reads the JSON it answers with,
 which Biome calls an experimental reporter — a release of its own may move the
 shape, and it is the only reporter carrying the severities this check needs.
+A build hands it every file at once when webpack is done building them, one
+run for each 500, rather than in batches while webpack builds: each run reads
+the configuration and the project again. Over 1,500 files that took the CPU of
+the processes from 2.9 s to 2.2 s, and for oxlint from 1.2–1.7 s to 0.3 s.
 
 Biome's project and types rules — `noImportCycles`, `noFloatingPromises` —
 answer for a file from the files it imports, and which rules those are is not

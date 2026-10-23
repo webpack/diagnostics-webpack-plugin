@@ -274,6 +274,10 @@ export default {
   create,
   resultPath: (/** @type {EXPECTED_ANY} */ result) =>
     /** @type {FileResult} */ (result).filename,
+  // Each run is a process of its own that reads the configuration and, for
+  // Biome, the project again: handed every file at once, a build starts one
+  // for each 500 files rather than one for each batch webpack builds.
+  lintsOnce: () => true,
   readsAcrossFiles,
 };
 
