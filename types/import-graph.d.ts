@@ -17,7 +17,7 @@ export type Imports = {
    */
   global: boolean;
   /**
-   * the relative imports that resolve to nothing, as written
+   * the relative imports that resolve to nothing, as written, assets included
    */
   missing: string[];
 };

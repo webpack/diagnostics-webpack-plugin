@@ -17,7 +17,7 @@ import { toPosixPath } from "./utils.js";
  * @property {string[]} resolved the files its imports resolve to
  * @property {boolean} unresolved whether a relative import resolved to nothing
  * @property {boolean} global whether it declares something every file can see
- * @property {string[]} missing the relative imports that resolve to nothing, as written
+ * @property {string[]} missing the relative imports that resolve to nothing, as written, assets included
  */
 
 /**
@@ -40,6 +40,10 @@ import { toPosixPath } from "./utils.js";
  * @property {Map<string, Read>} reads every file read for a signature, as it was read
  * @property {Map<string, string>} configHashes each config file and what it extends, hashed, as the signatures were last read under
  */
+
+// What a file webpack bundles and TypeScript has no types for ends in.
+const ASSET =
+  /\.(?:css|scss|sass|less|styl|stylus|pcss|postcss|svg|png|jpe?g|gif|webp|avif|ico|bmp|tiff?|woff2?|ttf|otf|eot|txt|md|html?|wasm|mp4|webm|mp3|wav|ogg|flac|aac)(?:\?.*)?$/iu;
 
 // What the options of a directory no config file covers are taken as: what a
 // bundler resolves, JavaScript included.
@@ -113,6 +117,9 @@ function importsOf(graph, file, text) {
   /** @type {string[]} */
   const missing = [];
 
+  /** @type {string[]} */
+  const assets = [];
+
   for (const { fileName } of info.importedFiles) {
     const found = ts.resolveModuleName(
       fileName,
@@ -121,8 +128,18 @@ function importsOf(graph, file, text) {
       ts.sys,
     ).resolvedModule;
 
-    if (found) resolved.push(toPosixPath(resolve(found.resolvedFileName)));
-    else if (fileName.startsWith(".")) missing.push(fileName);
+    if (found) {
+      resolved.push(toPosixPath(resolve(found.resolvedFileName)));
+    } else if (!fileName.startsWith(".")) {
+      continue;
+    } else if (ASSET.test(fileName) && !options.allowArbitraryExtensions) {
+      // A stylesheet or an image is a module to webpack and nothing to
+      // TypeScript, which no file written later turns into a type — unless
+      // `allowArbitraryExtensions` reads one through a `.d.css.ts` beside it.
+      assets.push(fileName);
+    } else {
+      missing.push(fileName);
+    }
   }
 
   for (const { fileName } of info.referencedFiles) {
@@ -132,7 +149,8 @@ function importsOf(graph, file, text) {
   return {
     resolved,
     unresolved: missing.length > 0,
-    missing,
+    // Still part of what a signature is read from, and of nothing else.
+    missing: [...missing, ...assets],
     // `declare global` and `declare module` reach files that never import the
     // one declaring them.
     global:
