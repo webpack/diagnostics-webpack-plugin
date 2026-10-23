@@ -19,7 +19,7 @@ import { omitPluginOptions } from "../utils.js";
  */
 
 /**
- * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY>, readAt: number, dropped: Map<string, { text: string, time: Date }> }} Held
+ * @typedef {{ signature: string, files: Map<string, EXPECTED_ANY>, seen: Set<string>, missing: Set<string>, host: EXPECTED_ANY, program: EXPECTED_ANY, programs: Map<string, EXPECTED_ANY>, readAt: number, dropped: Map<string, { text: string, time: Date }>, declarations: Map<string, Diagnostic[]> }} Held
  */
 
 const nodeRequire = createRequire(import.meta.url);
@@ -55,6 +55,7 @@ function getHeld(compiler, id) {
       programs: new Map(),
       readAt: 0,
       dropped: new Map(),
+      declarations: new Map(),
     };
     checks.set(id, held);
   }
@@ -392,6 +393,56 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
 }
 
 /**
+ * What the declarations of the program's files say, worked out again only for
+ * the files a change reached: the builder knows them as the ones it has to
+ * check again, and a declaration says nothing a check of its file would not.
+ * Asked of the program as a whole, every file's declarations are emitted on
+ * every rebuild.
+ * @param {Held} held what the last compilation left behind, with what its declarations said
+ * @param {EXPECTED_ANY} program the program built this time
+ * @returns {Diagnostic[]} what the declarations of all its files say
+ */
+function declarationDiagnostics(held, program) {
+  // Asked before the semantic diagnostics are: once those are known the
+  // builder has nothing left that it would check again.
+  let reached = held.declarations.size === 0;
+  /** @type {Set<string>} */
+  const affected = new Set();
+
+  for (
+    let next = held.program.getSemanticDiagnosticsOfNextAffectedFile();
+    next;
+    next = held.program.getSemanticDiagnosticsOfNextAffectedFile()
+  ) {
+    // The whole program, where a change reaches every file.
+    if (next.affected === program) reached = true;
+    else affected.add(next.affected.fileName);
+  }
+
+  /** @type {Map<string, Diagnostic[]>} */
+  const declarations = new Map();
+
+  for (const file of program.getSourceFiles()) {
+    // A declaration file has none of its own to emit.
+    if (file.isDeclarationFile) continue;
+
+    const known = held.declarations.get(file.fileName);
+
+    declarations.set(
+      file.fileName,
+      !reached && known && !affected.has(file.fileName)
+        ? known
+        : program.getDeclarationDiagnostics(file),
+    );
+  }
+
+  // A file the program no longer holds is dropped with it.
+  held.declarations = declarations;
+
+  return [...declarations.values()].flat();
+}
+
+/**
  * The program the config file describes, with emit off: webpack writes the
  * output, so a check that wrote any of its own would fight it.
  * @param {TypeScript} ts the loaded TypeScript
@@ -479,6 +530,7 @@ function check(ts, options, held) {
     );
     held.program = undefined;
     held.programs = new Map();
+    held.declarations = new Map();
   }
 
   held.seen.clear();
@@ -512,11 +564,11 @@ function check(ts, options, held) {
       ...program.getOptionsDiagnostics(),
       ...(kinds.syntactic ? held.program.getSyntacticDiagnostics() : []),
       ...(kinds.global ? program.getGlobalDiagnostics() : []),
-      ...(kinds.semantic ? held.program.getSemanticDiagnostics() : []),
       ...(kinds.declaration &&
       (parsed.options.declaration || parsed.options.composite)
-        ? program.getDeclarationDiagnostics()
+        ? declarationDiagnostics(held, program)
         : []),
+      ...(kinds.semantic ? held.program.getSemanticDiagnostics() : []),
     ]),
   ];
 
