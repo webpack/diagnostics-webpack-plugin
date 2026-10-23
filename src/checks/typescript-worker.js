@@ -69,6 +69,7 @@ async function lintFiles() {
     directories: found.directories,
     writes: found.writes,
     missing: [...held.missing],
+    seen: [...held.seen],
   };
 }
 

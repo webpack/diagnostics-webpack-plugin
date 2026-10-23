@@ -873,7 +873,9 @@ While webpack watches, the program is kept and handed to the build after it, so
 a rebuild type checks what the change reaches rather than the project over
 again — about 30 ms rather than 300 over three hundred files, for the memory the
 program holds on to (some 50 MB there). A change to the config file, or to the
-compiler options given here, starts a new one.
+compiler options given here, starts a new one. A rebuild for a file the program
+neither reads nor would pick up — a stylesheet, an image — reports what the last
+run found without asking the program at all.
 
 Alongside the shared options you can pass any
 [compiler option](https://www.typescriptlang.org/tsconfig/) — they override what
