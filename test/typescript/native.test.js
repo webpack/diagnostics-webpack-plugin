@@ -50,17 +50,24 @@ describe("typescript 7", () => {
     const native = startNative(await loadNative(typescriptPath), options);
     /** @type {string[]} */
     const order = [];
-    const snapshot = native.api.updateSnapshot.bind(native.api);
-
-    native.api.updateSnapshot = async (/** @type {unknown} */ change) => {
+    /**
+     * @param {(change: unknown) => Promise<EXPECTED_ANY>} take what takes a snapshot
+     * @returns {(change: unknown) => Promise<EXPECTED_ANY>} it, writing down when
+     */
+    const noted = (take) => async (change) => {
       order.push("start");
 
-      const taken = await snapshot(change);
+      const taken = await take(change);
 
       order.push("taken");
+      taken.update = noted(taken.update.bind(taken));
 
       return taken;
     };
+
+    native.api.createSnapshot = noted(
+      native.api.createSnapshot.bind(native.api),
+    );
 
     try {
       const [first, second] = await Promise.all([
@@ -146,6 +153,23 @@ describe("typescript 7", () => {
 
       assert.match(message, /TypeScript 7/u);
       assert.match(message, named);
+    }
+  });
+
+  it("should say a TypeScript with no API to check with has none", async () => {
+    for (const threads of [false, "auto"]) {
+      const stats = await pack("good", {
+        typescriptPath: join(
+          import.meta.dirname,
+          "mock/typescript-version-only",
+        ),
+        threads,
+      }).runAsync();
+
+      assert.match(
+        stats.compilation.errors[0].message,
+        /TypeScript 7\.0\.2 offers no compiler API to check with/u,
+      );
     }
   });
 

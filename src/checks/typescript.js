@@ -218,10 +218,6 @@ async function create({ key, id: entry, options, compilation }) {
   // The program is the whole project, so it is built once however many batches
   // of files the plugin hands over.
   let checked = false;
-  // The worker's answer to this compilation's run, which is what a newer
-  // compilation stops when it takes over.
-  /** @type {Promise<EXPECTED_ANY> | undefined} */
-  let answer;
 
   /**
    * @param {EXPECTED_ANY} one a diagnostic, or what a worker said of one
@@ -278,22 +274,7 @@ async function create({ key, id: entry, options, compilation }) {
       }
 
       if (worker) {
-        answer = worker.lintFiles();
-
-        const found = await answer;
-
-        // A stopped run found nothing a later rebuild can be answered with.
-        if (found.cancelled) {
-          runs.delete(id);
-          ({ read, directories, writes, missing } = {
-            read: found.files,
-            directories: found.directories,
-            writes: found.writes,
-            missing: found.missing,
-          });
-
-          return [];
-        }
+        const found = await worker.lintFiles();
 
         return remember(
           {
@@ -323,11 +304,6 @@ async function create({ key, id: entry, options, compilation }) {
         },
         [...held.seen],
       );
-    },
-    // A run of an older compilation is left to finish on the worker while
-    // webpack builds the next one, which waits for it before checking again.
-    cancel() {
-      if (worker && answer) worker.cancel(answer);
     },
     readFiles() {
       return read;

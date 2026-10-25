@@ -3,7 +3,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { toPosixPath } from "../utils.js";
@@ -13,7 +13,7 @@ import { getTypeScriptOptions } from "./typescript-program.js";
 /** @typedef {import("../options.js").CheckOptions} Options */
 /**
  * What the native compiler says of one problem.
- * @typedef {{ fileName?: string, pos: number, end: number, code: number, category: number, text: string, messageChain?: NativeDiagnostic[] }} NativeDiagnostic
+ * @typedef {{ fileName?: string, code: number, category: number, text: string, messageChain?: NativeDiagnostic[] }} NativeDiagnostic
  */
 /**
  * What a run answers with, described as a worker describes it.
@@ -21,16 +21,17 @@ import { getTypeScriptOptions } from "./typescript-program.js";
  */
 /**
  * A client of the native compiler and what it last saw of the project.
- * @typedef {{ api: EXPECTED_ANY, error: number, snapshot: EXPECTED_ANY, files: Set<string>, turn: Promise<void> }} Native
+ * @typedef {{ loaded: EXPECTED_ANY, api: EXPECTED_ANY, snapshot: EXPECTED_ANY, files: Set<string>, turn: Promise<void> }} Native
  */
 
 const nodeRequire = createRequire(import.meta.url);
 
 /**
- * The API TypeScript 7 offers in place of the compiler it no longer exposes to
- * JavaScript, or nothing for an older TypeScript, which is checked in-process.
+ * The API a TypeScript with a native compiler ships in place of a compiler
+ * API in JavaScript, or nothing for a TypeScript checked in-process. Told by
+ * what the package exports rather than by its version.
  * @param {string} specifier where TypeScript is found
- * @returns {Promise<EXPECTED_ANY>} the native API, if this is TypeScript 7 or later
+ * @returns {Promise<EXPECTED_ANY>} the native API, if the package ships one
  */
 async function loadNative(specifier) {
   let manifest;
@@ -42,12 +43,12 @@ async function loadNative(specifier) {
     return undefined;
   }
 
-  const { version } = JSON.parse(readFileSync(manifest, "utf8"));
+  const { name, exports } = JSON.parse(readFileSync(manifest, "utf8"));
 
-  if (Number(String(version).split(".")[0]) < 7) return undefined;
+  if (!exports || !exports["./async"]) return undefined;
 
   // The package names itself, so its own exports resolve from inside it.
-  const api = createRequire(manifest).resolve("typescript/unstable/async");
+  const api = createRequire(manifest).resolve(`${name}/async`);
 
   return import(pathToFileURL(api).href);
 }
@@ -105,48 +106,13 @@ function findConfigFile(options) {
 
 /**
  * @param {NativeDiagnostic} diagnostic one of what a run found
- * @returns {string} its message with every message it chains, as `tsc` joins them
+ * @returns {string} its message with every message it chains
  */
 function flatten(diagnostic) {
   return [
     diagnostic.text,
     ...(diagnostic.messageChain || []).map(flatten),
   ].join(" ");
-}
-
-/**
- * Printed the way `tsc --pretty` prints one: where it is, what it is, and the
- * line it is on with the span underlined.
- * @param {NativeDiagnostic} diagnostic one of what a run found
- * @param {number} error what the native compiler numbers an error
- * @param {string} context what the file is named relative to
- * @param {Map<string, string>} texts the text each file was checked as
- * @returns {string} the diagnostic, formatted
- */
-function format(diagnostic, error, context, texts) {
-  const [color, category] =
-    diagnostic.category === error ? [91, "error"] : [93, "warning"];
-  const head = `\u001B[${color}m${category}\u001B[0m\u001B[90m TS${diagnostic.code}: \u001B[0m${flatten(diagnostic)}`;
-
-  if (!diagnostic.fileName) return `${head}\n`;
-
-  const text = texts.get(diagnostic.fileName) || "";
-
-  const before = text.slice(0, diagnostic.pos).split(/\r?\n/u);
-  const line = before.length;
-  const column = before[before.length - 1].length + 1;
-  const source = text.split(/\r?\n/u)[line - 1] || "";
-  const width = Math.max(
-    1,
-    Math.min(diagnostic.end - diagnostic.pos, source.length - column + 1),
-  );
-  const gutter = String(line);
-
-  return (
-    `\u001B[96m${relative(context, diagnostic.fileName)}\u001B[0m:\u001B[93m${line}\u001B[0m:\u001B[93m${column}\u001B[0m - ${head}\n\n` +
-    `\u001B[7m${gutter}\u001B[0m ${source}\n` +
-    `\u001B[7m${" ".repeat(gutter.length)}\u001B[0m \u001B[91m${" ".repeat(column - 1)}${"~".repeat(width)}\u001B[0m\n`
-  );
 }
 
 /**
@@ -167,7 +133,7 @@ function keyOf(file) {
  * so nothing has to be read again to find out.
  * @param {Native} native the client and what it last saw
  * @param {EXPECTED_ANY} compiler the compiler the check runs for
- * @returns {EXPECTED_ANY} the changes, in the shape `updateSnapshot` takes
+ * @returns {EXPECTED_ANY} the changes, in the shape `fileNotifications` takes
  */
 function changesSince(native, compiler) {
   /** @type {string[]} */
@@ -210,23 +176,22 @@ async function checkOnce(native, options, compiler) {
     );
   }
 
-  const context = String(options.context);
   const configFile = findConfigFile(options);
   const previous = native.snapshot;
 
-  native.snapshot = await native.api.updateSnapshot(
-    previous
-      ? {
-          openProjects: [configFile],
-          fileChanges: changesSince(native, compiler),
-        }
-      : { openProjects: [configFile] },
-  );
+  native.snapshot = previous
+    ? await previous.update({
+        openProjects: [configFile],
+        fileNotifications: changesSince(native, compiler),
+        // Brought up to date now rather than on the first question asked.
+        ensurePrograms: true,
+      })
+    : await native.api.createSnapshot({ openProjects: [configFile] });
 
   if (previous) await previous.dispose();
 
-  const project = native.snapshot.getProject(configFile);
-  const { program } = project;
+  const project = native.snapshot.getConfiguredProject(configFile);
+  const { program, parsedCommandLine } = project;
   const kinds = {
     syntactic: true,
     semantic: true,
@@ -234,7 +199,7 @@ async function checkOnce(native, options, compiler) {
     global: true,
     ...options.diagnosticOptions,
   };
-  const { compilerOptions } = project;
+  const compilerOptions = parsedCommandLine.options;
   /** @type {NativeDiagnostic[][]} */
   const found = await Promise.all([
     program.getConfigFileParsingDiagnostics(),
@@ -247,27 +212,8 @@ async function checkOnce(native, options, compiler) {
       : [],
     kinds.semantic ? program.getSemanticDiagnostics() : [],
   ]);
-  // The text each file was checked as, which is what the line under a
-  // diagnostic is printed from, rather than what is on disk by now.
-  const named = new Set(
-    found
-      .flat()
-      .flatMap((diagnostic) =>
-        diagnostic.fileName ? [diagnostic.fileName] : [],
-      ),
-  );
-  /** @type {Map<string, string>} */
-  const texts = new Map(
-    await Promise.all(
-      [...named].map(
-        async (fileName) =>
-          /** @type {[string, string]} */ ([
-            fileName,
-            ((await program.getSourceFile(fileName)) || { text: "" }).text,
-          ]),
-      ),
-    ),
-  );
+  const { DiagnosticCategory, formatDiagnosticsWithColorAndContext } =
+    native.loaded;
   /** @type {Set<string>} */
   const seen = new Set();
   /** @type {Described[]} */
@@ -275,7 +221,7 @@ async function checkOnce(native, options, compiler) {
 
   for (const diagnostic of found.flat()) {
     // One kind can repeat what another reported, as `tsc` deduplicates.
-    const key = `${diagnostic.fileName}\0${diagnostic.pos}\0${diagnostic.code}\0${diagnostic.text}`;
+    const key = JSON.stringify(diagnostic);
 
     if (seen.has(key)) continue;
 
@@ -285,9 +231,10 @@ async function checkOnce(native, options, compiler) {
       // As `tsc` prints it, which is how `ignoreDiagnostics` names one too.
       code: `TS${diagnostic.code}`,
       // What is not an error is reported as a warning.
-      severity: diagnostic.category === native.error ? "error" : "warning",
+      severity:
+        diagnostic.category === DiagnosticCategory.Error ? "error" : "warning",
       text: flatten(diagnostic),
-      formatted: format(diagnostic, native.error, context, texts),
+      formatted: formatDiagnosticsWithColorAndContext([diagnostic], native.api),
     });
   }
 
@@ -297,7 +244,7 @@ async function checkOnce(native, options, compiler) {
     diagnostics,
     // The config file decides which files the program holds, so reading it
     // again is what a change to it takes.
-    files: [configFile, ...project.rootFiles],
+    files: [configFile, ...parsedCommandLine.fileNames],
     // Where a file the program has never held can appear.
     directories: [dirname(configFile)],
   };
@@ -332,8 +279,8 @@ function checkNative(native, options, compiler) {
  */
 function startNative(loaded, options) {
   return {
+    loaded,
     api: new loaded.API({ cwd: String(options.context) }),
-    error: loaded.DiagnosticCategory.Error,
     snapshot: undefined,
     files: new Set(),
     turn: Promise.resolve(),

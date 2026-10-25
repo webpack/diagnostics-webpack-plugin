@@ -147,8 +147,8 @@ async function affectedFiles(compiler, check, files) {
  * Walks the file system for the files a check wants, and says which of them
  * webpack has just seen change.
  * @param {Compiler} compiler compiler
- * @param {ResolvedCheck & { afterwards?: string[] }} check the check to collect the files of
- * @returns {Promise<{ lint: string[], keep: string[], after?: string[] }>} the files to lint, the ones to report from the last compilation, and of those the ones to lint again once the build is over
+ * @param {ResolvedCheck} check the check to collect the files of
+ * @returns {Promise<{ lint: string[], keep: string[] }>} the files to lint, and the ones to report from the last compilation
  */
 async function collectFromFileSystem(compiler, check) {
   const { adapter, wanted, exclude } = check;
@@ -170,39 +170,13 @@ async function collectFromFileSystem(compiler, check) {
   if (readsAcrossFiles(compiler, check)) {
     const affected = await affectedFiles(compiler, check, found);
 
-    if (!check.afterwards) {
-      if (!affected) return { lint: found, keep: [] };
+    if (!affected) return { lint: found, keep: [] };
 
-      /** @type {{ lint: string[], keep: string[] }} */
-      const split = { lint: [], keep: [] };
-
-      for (const file of found) {
-        split[affected.has(toPosixPath(file)) ? "lint" : "keep"].push(file);
-      }
-
-      return split;
-    }
-
-    // Told to look again once the build is over: what changed is linted with
-    // the build, and what else the change reaches is reported from its last
-    // run until it is linted after it.
-    const touched = new Set(
-      [...modifiedFiles].map((file) => toPosixPath(file)),
-    );
-    /** @type {{ lint: string[], keep: string[], after: string[] }} */
-    const split = { lint: [], keep: [], after: [] };
+    /** @type {{ lint: string[], keep: string[] }} */
+    const split = { lint: [], keep: [] };
 
     for (const file of found) {
-      const known = toPosixPath(file);
-
-      if (touched.has(known)) {
-        split.lint.push(file);
-        continue;
-      }
-
-      split.keep.push(file);
-
-      if (!affected || affected.has(known)) split.after.push(file);
+      split[affected.has(toPosixPath(file)) ? "lint" : "keep"].push(file);
     }
 
     return split;
@@ -304,14 +278,6 @@ function isAdvisory(options) {
 
     return severity === false || severity === "log";
   });
-}
-
-/**
- * @param {{ errors?: DiagnosticError, warnings?: DiagnosticError }} report what a run of a check reported
- * @returns {string} what it says, to tell two of them apart by
- */
-function describeReport({ errors, warnings }) {
-  return `${errors ? errors.message : ""}\0${warnings ? warnings.message : ""}`;
 }
 
 class DiagnosticsWebpackPlugin {
@@ -491,46 +457,6 @@ class DiagnosticsWebpackPlugin {
       );
     };
 
-    /**
-     * Lints what a rebuild reported from the last run once the build is over,
-     * and prints what that changes. What it finds is remembered either way, so
-     * the next build reports it.
-     * @param {{ files: string[], afterwards?: string[], compilation: Compilation } & ResolvedCheck} check the check the build ran
-     * @param {string} reported what the build reported of it
-     * @param {number} mine which compilation it was run for
-     */
-    const lintAfterBuild = (check, reported, mine) => {
-      const after = new Set(check.afterwards);
-      const runner = this.createRunner(check, check.compilation);
-
-      runner.lint([...after]);
-      runner.keep(check.files.filter((file) => !after.has(file)));
-
-      const report = runner.report();
-
-      runner.detach(report);
-
-      report.then(
-        (found) => {
-          if (generation !== mine || describeReport(found) === reported) {
-            return;
-          }
-
-          const logger = compiler.getInfrastructureLogger(LINT_PLUGIN);
-
-          logger.info(
-            `${check.name}: what the last build reported has changed now that the files it did not rebuild are linted again`,
-          );
-
-          if (found.errors) logger.error(found.errors.message);
-          if (found.warnings) logger.warn(found.warnings.message);
-        },
-        (err) => {
-          compiler.getInfrastructureLogger(LINT_PLUGIN).error(err.message);
-        },
-      );
-    };
-
     compiler.hooks.compilation.tap(this.key, (compilation) => {
       generation += 1;
 
@@ -562,22 +488,6 @@ class DiagnosticsWebpackPlugin {
         // the graph is done and the files a change can reach are known.
         /** @type {string[]} */
         const deferred = [];
-        // A rebuild of a check reading across files that is told to lint what
-        // a change reaches once the build is over: those files, reported from
-        // their last run until then. Nothing when it lints them with the build,
-        // which one writing an `outputReport` does: that file is written once,
-        // with every check sharing it, and what comes after would not reach it.
-        const afterwards =
-          !late &&
-          check.options.lintDependentsAfterBuild &&
-          !(
-            check.options.outputReport && check.options.outputReport.filePath
-          ) &&
-          compiler.watchMode &&
-          !compilation.compiler.isChild() &&
-          compiler.modifiedFiles
-            ? /** @type {string[]} */ ([])
-            : undefined;
         let scheduled = false;
         // Handed in batches while webpack builds, unless the check's tool
         // pays for a run of its own every time it is handed some.
@@ -613,7 +523,6 @@ class DiagnosticsWebpackPlugin {
 
         return {
           ...check,
-          compilation,
           /** @type {string[]} */
           files: [],
           // The same files, to tell one already listed without a search.
@@ -622,7 +531,6 @@ class DiagnosticsWebpackPlugin {
           pending,
           kept,
           deferred,
-          afterwards,
           flush,
           handOver,
           late,
@@ -698,12 +606,8 @@ class DiagnosticsWebpackPlugin {
 
         check.collecting = collectFromFileSystem(compiler, check).then(
           (collected) => {
-            check.files.push(...collected.lint, ...collected.keep);
             check.pending.push(...collected.lint);
             check.kept.push(...collected.keep);
-            if (collected.after && check.afterwards) {
-              check.afterwards.push(...collected.after);
-            }
             check.flush(true);
           },
           (err) => {
@@ -725,16 +629,10 @@ class DiagnosticsWebpackPlugin {
               );
 
               for (const file of check.deferred.splice(0)) {
-                if (affected && !affected.has(toPosixPath(file))) {
-                  check.kept.push(file);
-                } else if (check.afterwards) {
-                  // Reported from its last run now, and linted again once
-                  // the build is over.
-                  check.kept.push(file);
-                  check.afterwards.push(file);
-                } else {
-                  check.pending.push(file);
-                }
+                (!affected || affected.has(toPosixPath(file))
+                  ? check.pending
+                  : check.kept
+                ).push(file);
               }
             }
 
@@ -838,12 +736,6 @@ class DiagnosticsWebpackPlugin {
 
             readLast.set(id, { read, missing, directories, writes });
             await watch(check, report);
-
-            if (check.afterwards && check.afterwards.length > 0) {
-              const reported = describeReport(report);
-
-              afterBuild.push(() => lintAfterBuild(check, reported, mine));
-            }
 
             // `reportAs` has already dropped whatever it reports as `false`,
             // so what is left only needs putting where it belongs.

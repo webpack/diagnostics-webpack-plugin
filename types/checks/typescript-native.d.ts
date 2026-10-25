@@ -5,8 +5,6 @@ export type Options = import("../options.js").CheckOptions;
  */
 export type NativeDiagnostic = {
   fileName?: string;
-  pos: number;
-  end: number;
   code: number;
   category: number;
   text: string;
@@ -26,10 +24,11 @@ export type Described = {
  * A client of the native compiler and what it last saw of the project.
  */
 export type Native = {
+  loaded: EXPECTED_ANY;
   api: EXPECTED_ANY;
-  error: number;
   snapshot: EXPECTED_ANY;
   files: Set<string>;
+  turn: Promise<void>;
 };
 /**
  * Checks the program the config file describes with the native compiler, which
@@ -49,10 +48,11 @@ export function checkNative(
   directories: string[];
 }>;
 /**
- * The API TypeScript 7 offers in place of the compiler it no longer exposes to
- * JavaScript, or nothing for an older TypeScript, which is checked in-process.
+ * The API a TypeScript with a native compiler ships in place of a compiler
+ * API in JavaScript, or nothing for a TypeScript checked in-process. Told by
+ * what the package exports rather than by its version.
  * @param {string} specifier where TypeScript is found
- * @returns {Promise<EXPECTED_ANY>} the native API, if this is TypeScript 7 or later
+ * @returns {Promise<EXPECTED_ANY>} the native API, if the package ships one
  */
 export function loadNative(specifier: string): Promise<EXPECTED_ANY>;
 /**

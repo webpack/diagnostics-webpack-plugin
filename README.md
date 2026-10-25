@@ -103,7 +103,6 @@ Every check to run is an entry in `checks`, named by its `use`. The list may nam
 | [`outputReport`](#outputreport)                                                                                     | Shared | A file the same results are written to.                                      |
 | [`readsAcrossFiles`](#readsacrossfiles)                                                                             | Shared | Whether a file's results can turn on another, so a rebuild lints importers.  |
 | [`reportAs`](#reportas)                                                                                             | Shared | What the build carries: an error, a warning, a log line, or nothing.         |
-| [`lintDependentsAfterBuild`](#lintdependentsafterbuild)                                                             | Shared | Whether a watch rebuild waits for the files that turn on a change.           |
 | [`resourceQueryExclude`](#resourcequeryexclude)                                                                     | Shared | Which module queries are left out.                                           |
 | [`threads`](#threads)                                                                                               | Shared | How wide the work is spread.                                                 |
 | [`configType`, `eslintPath`](#eslint)                                                                               | Check  | ESLint's own.                                                                |
@@ -366,37 +365,6 @@ and a check configured with a function, such as a formatter written in the
 configuration, is run on webpack's thread, because a function cannot be handed
 to a worker.
 
-#### `lintDependentsAfterBuild`
-
-- Type:
-
-```ts
-type lintDependentsAfterBuild = boolean;
-```
-
-- Default: `false`
-
-Whether a watch rebuild waits for the files it did not rebuild but has to lint
-again — for a check that [reads across files](#readsacrossfiles), the ones
-importing a file that changed, however indirectly. Set, the build lints what it rebuilt and reports those from
-their last run, and they are linted again once the build is over. When that
-changes what the check reports, the new report is printed to the terminal, and
-the next build carries it — so a dev server overlays it from then on rather than
-at once. `fork-ts-checker-webpack-plugin`'s `async` makes the same trade.
-
-```js
-new DiagnosticsPlugin({
-  checks: [{ use: "eslint", lintDependentsAfterBuild: true }],
-});
-```
-
-Over three hundred modules under typed linting, an edit's rebuild took 191 ms
-rather than 2.0 s, and an error it caused in a file importing the edited one was
-printed 2.4 s after the edit. A build that is not watched, the first build of a
-watch, and a check writing an [`outputReport`](#outputreport) lint everything
-before they finish whatever this says — that file is written with the build, and
-would otherwise hold what the build reported rather than what was found after.
-
 #### `readsAcrossFiles`
 
 - Type:
@@ -421,7 +389,7 @@ it runs. A change that could reach files some other way — a declaration file
 nothing imports, a `declare global`, a config file, an import that resolves to
 nothing (a stylesheet, an image or another asset webpack bundles aside) — lints
 every file again, as does a project without TypeScript, or with TypeScript 7,
-whose native compiler has no API to read imports through. There,
+whose native compiler has no JavaScript API to read imports through. There,
 an ESLint check with `cache: true` written down keeps ESLint's own cache, which
 answers for a file whose import changed from before the change.
 
@@ -555,13 +523,7 @@ The work is moved out of the rebuild rather than off the machine: an edit
 arriving while such a check is still running waits for the rest of it, since a
 check holds the thread the build runs on. A report a newer rebuild has already
 overtaken is dropped, and a check never has two of its runs going at once — the
-next starts when the last has reported. A TypeScript check on a worker of its
-own (see [`threads`](#threads)) stops such a run as soon as the next rebuild
-starts, between one file and the next: what the program got through is kept,
-and the next run checks the rest. An edit made while a long run is going is
-then reported once its own run is done, without waiting for the rest of the
-old one. Over 600 files, an edit made while an earlier one was still being
-checked was reported after 2.3–2.6 s instead of 4.2–4.5 s.
+next starts when the last has reported.
 
 #### `ignoreDiagnostics`
 
@@ -828,9 +790,9 @@ new DiagnosticsPlugin({ checks: ["biome"] });
 Like the oxlint check this runs a binary and reads the JSON it answers with,
 which Biome calls an experimental reporter — a release of its own may move the
 shape, and it is the only reporter carrying the severities this check needs.
-A build hands it every file at once when webpack is done building them, one
-run for each 500, rather than in batches while webpack builds: each run reads
-the configuration and the project again. Over 1,500 files that took the CPU of
+A build hands it every file at once when webpack is done building them, rather
+than in batches while webpack builds: each run reads the configuration and the
+project again. Over 1,500 files that took the CPU of
 the processes from 2.9 s to 2.2 s, and for oxlint from 1.2–1.7 s to 0.3 s.
 
 Biome's project and types rules — `noImportCycles`, `noFloatingPromises` —
@@ -958,10 +920,12 @@ new DiagnosticsPlugin({
 ### TypeScript 7
 
 TypeScript 7 is a native compiler with no compiler API in JavaScript, so the
-check talks to it through the API it ships instead (`typescript/unstable/async`).
-It runs in a process of its own, which takes the place of
-[`threads`](#threads), and is kept open while webpack watches: a rebuild tells it
-which files webpack saw change. What it prints is what `tsc --pretty` prints.
+check talks to it through the API it ships instead, `typescript/async`, from
+TypeScript 7.1. TypeScript 7.0 shipped that API only as an unstable preview,
+which the check does not use. The compiler runs in a process of its own, which
+takes the place of [`threads`](#threads), and is kept open while webpack
+watches: a rebuild tells it which files webpack saw change. Diagnostics are
+printed by TypeScript's own formatter, as `tsc --pretty` prints them.
 
 It checks the project as its config file describes it, so [`build`](#build), a
 [`mode`](#mode) that writes, and compiler options written in the plugin are
@@ -969,11 +933,8 @@ reported as unsupported rather than ignored. Compiler options belong in the
 `tsconfig.json` instead; `build` and a writing `mode` have no TypeScript 7
 counterpart.
 
-Over 600 files, a one-shot build with the check went from 3.5 s to 1.4–1.5 s
-next to TypeScript 6, and webpack's own process from 6.4 to 0.6–0.8 s of CPU and
-from 383 to 108 MB at its peak; the native compiler, checking the same project
-on its own, takes 1.5–1.7 s of CPU. A rebuild after an edit went from 1.0–2.5 s
-to 0.7–0.8 s.
+Over 600 files, a one-shot build with the check took 1.2–1.3 s on TypeScript
+7.1, against 3.8 s on TypeScript 6 without its saved state and 2.0–2.1 s with it.
 
 ### `typescriptPath`
 

@@ -15,7 +15,6 @@ export type Found = {
   directories: string[];
   writes: string[];
   extensions: string[];
-  cancelled?: boolean;
 };
 export type Held = {
   signature: string;
@@ -41,15 +40,9 @@ export type Held = {
  * @param {TypeScript} ts the loaded TypeScript
  * @param {Options} options options
  * @param {Held} held what the last compilation left behind
- * @param {EXPECTED_ANY=} cancellation what tells a run nobody waits for any more to stop
  * @returns {Found} what it found, and what it read to find it
  */
-export function check(
-  ts: TypeScript,
-  options: Options,
-  held: Held,
-  cancellation?: EXPECTED_ANY | undefined,
-): Found;
+export function check(ts: TypeScript, options: Options, held: Held): Found;
 /**
  * What a diagnostic says, as data: a `Diagnostic` holds the source file it was
  * found in, so this is what can be read once it has left the check.

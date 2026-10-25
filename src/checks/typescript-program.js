@@ -18,7 +18,7 @@ import { omitPluginOptions } from "../utils.js";
  * hands them back, and the program that type checked them.
  * What a run of the check answers with: what it found, and what a watcher has
  * to follow for it to answer the same way again.
- * @typedef {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[], writes: string[], extensions: string[], cancelled?: boolean }} Found
+ * @typedef {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[], writes: string[], extensions: string[] }} Found
  */
 
 /**
@@ -443,10 +443,9 @@ function stateFileFor(options, configFile, compilerOptions) {
  * every rebuild.
  * @param {Held} held what the last compilation left behind, with what its declarations said
  * @param {EXPECTED_ANY} program the program built this time
- * @param {EXPECTED_ANY=} cancellation what tells a run nobody waits for any more to stop
  * @returns {Diagnostic[]} what the declarations of all its files say
  */
-function declarationDiagnostics(held, program, cancellation) {
+function declarationDiagnostics(held, program) {
   // Asked before the semantic diagnostics are: once those are known the
   // builder has nothing left that it would check again.
   let reached = held.declarations.size === 0;
@@ -454,10 +453,9 @@ function declarationDiagnostics(held, program, cancellation) {
   const affected = new Set();
 
   for (
-    let next =
-      held.program.getSemanticDiagnosticsOfNextAffectedFile(cancellation);
+    let next = held.program.getSemanticDiagnosticsOfNextAffectedFile();
     next;
-    next = held.program.getSemanticDiagnosticsOfNextAffectedFile(cancellation)
+    next = held.program.getSemanticDiagnosticsOfNextAffectedFile()
   ) {
     // The whole program, where a change reaches every file.
     if (next.affected === program) reached = true;
@@ -477,7 +475,7 @@ function declarationDiagnostics(held, program, cancellation) {
       file.fileName,
       !reached && known && !affected.has(file.fileName)
         ? known
-        : program.getDeclarationDiagnostics(file, cancellation),
+        : program.getDeclarationDiagnostics(file),
     );
   }
 
@@ -493,10 +491,17 @@ function declarationDiagnostics(held, program, cancellation) {
  * @param {TypeScript} ts the loaded TypeScript
  * @param {Options} options options
  * @param {Held} held what the last compilation left behind
- * @param {EXPECTED_ANY=} cancellation what tells a run nobody waits for any more to stop
  * @returns {Found} what it found, and what it read to find it
  */
-function check(ts, options, held, cancellation) {
+function check(ts, options, held) {
+  // A native compiler ships `typescript/async`, which `loadNative` takes; one
+  // shipping neither has nothing to check through.
+  if (typeof ts.createProgram !== "function") {
+    throw new Error(
+      `TypeScript ${ts.version} offers no compiler API to check with, and no \`typescript/async\` either: TypeScript 7 is checked through \`typescript/async\` from 7.1.`,
+    );
+  }
+
   const context = String(options.context);
   const configFile =
     options.configFile ||
@@ -644,46 +649,20 @@ function check(ts, options, held, cancellation) {
       ]
         .filter(Boolean)
         .map(String);
-  /** @type {Diagnostic[]} */
-  let diagnostics;
-
-  try {
-    diagnostics = [
-      ...unrecoverable,
-      ...ts.sortAndDeduplicateDiagnostics([
-        ...program.getConfigFileParsingDiagnostics(),
-        ...program.getOptionsDiagnostics(),
-        ...(kinds.syntactic
-          ? held.program.getSyntacticDiagnostics(undefined, cancellation)
-          : []),
-        ...(kinds.global ? program.getGlobalDiagnostics(cancellation) : []),
-        ...(kinds.declaration &&
-        (parsed.options.declaration || parsed.options.composite)
-          ? declarationDiagnostics(held, program, cancellation)
-          : []),
-        ...(kinds.semantic
-          ? held.program.getSemanticDiagnostics(undefined, cancellation)
-          : []),
-      ]),
-    ];
-  } catch (err) {
-    if (!(err instanceof ts.OperationCanceledException)) throw err;
-
-    // The builder keeps what it got through and checks the rest next time.
-    // Which files the declarations were drained of is lost with the run, so
-    // the next one works all of them out again.
-    held.declarations = new Map();
-
-    return {
-      cancelled: true,
-      diagnostics: [],
-      host,
-      files,
-      directories,
-      writes,
-      extensions,
-    };
-  }
+  const diagnostics = [
+    ...unrecoverable,
+    ...ts.sortAndDeduplicateDiagnostics([
+      ...program.getConfigFileParsingDiagnostics(),
+      ...program.getOptionsDiagnostics(),
+      ...(kinds.syntactic ? held.program.getSyntacticDiagnostics() : []),
+      ...(kinds.global ? program.getGlobalDiagnostics() : []),
+      ...(kinds.declaration &&
+      (parsed.options.declaration || parsed.options.composite)
+        ? declarationDiagnostics(held, program)
+        : []),
+      ...(kinds.semantic ? held.program.getSemanticDiagnostics() : []),
+    ]),
+  ];
 
   if (stateFile) {
     try {

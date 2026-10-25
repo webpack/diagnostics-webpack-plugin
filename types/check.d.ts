@@ -32,11 +32,6 @@ export type Runner = {
   detach: (report: Promise<Report>) => void;
 };
 export type ResultStore = Map<string, CheckResult | undefined>;
-export type SharedRun = {
-  key: string;
-  run: Promise<Run>;
-  joined: boolean;
-};
 export type EXPECTED_ANY = any;
 /**
  * What tells one check's run of a tool from another's, so that only two runs

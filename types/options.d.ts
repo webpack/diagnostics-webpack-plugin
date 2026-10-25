@@ -49,10 +49,6 @@ export type SharedOptions = {
    */
   ignoreDiagnostics?: Ignore | undefined;
   /**
-   * whether a watch rebuild lints the files that can turn on a change after the build rather than during it
-   */
-  lintDependentsAfterBuild?: boolean | undefined;
-  /**
    * whether what a check reports of one file can turn on another, read from the tool's configuration when left out
    */
   readsAcrossFiles?: boolean | undefined;

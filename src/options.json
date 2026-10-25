@@ -49,9 +49,6 @@
     "ignoreDiagnostics": {
       "$ref": "./shared-options.json#/properties/ignoreDiagnostics"
     },
-    "lintDependentsAfterBuild": {
-      "$ref": "./shared-options.json#/properties/lintDependentsAfterBuild"
-    },
     "outputReport": {
       "$ref": "./shared-options.json#/properties/outputReport"
     },

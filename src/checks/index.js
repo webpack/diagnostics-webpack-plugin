@@ -44,7 +44,6 @@ import typescript from "./typescript.js";
  * @property {((results: CheckResult[], keep: (message: Message) => boolean) => CheckResult[])=} filterResults keeps what a predicate accepts of every result, which is what `ignore` is applied through
  * @property {(formatter?: FormatterOption) => Promise<Format>} getFormatter loads a formatter, falling back to the tool's default one
  * @property {() => Promise<void>} cleanup releases whatever the tool holds after a run
- * @property {(() => void)=} cancel stops a run of an older compilation that is still going, which nothing reports any more; what it answers with is dropped
  */
 
 /**
