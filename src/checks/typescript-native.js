@@ -238,13 +238,17 @@ async function checkOnce(native, options, compiler) {
     });
   }
 
-  native.files = new Set((await program.getSourceFileNames()).map(keyOf));
+  // The config file and every one it extends, which decide which files the
+  // program holds, so that a change to one of them is told as a change too.
+  const configs = await program.getConfigFileNames();
+
+  native.files = new Set(
+    [...(await program.getSourceFileNames()), ...configs].map(keyOf),
+  );
 
   return {
     diagnostics,
-    // The config file decides which files the program holds, so reading it
-    // again is what a change to it takes.
-    files: [configFile, ...parsedCommandLine.fileNames],
+    files: [...configs, ...parsedCommandLine.fileNames],
     // Where a file the program has never held can appear.
     directories: [dirname(configFile)],
   };
@@ -292,6 +296,9 @@ function startNative(loaded, options) {
  * @returns {Promise<void>} once it is closed
  */
 async function stopNative(native) {
+  // A run still going is let finish rather than left reading a snapshot gone.
+  await native.turn;
+
   if (native.snapshot) await native.snapshot.dispose();
 
   await native.api.close();

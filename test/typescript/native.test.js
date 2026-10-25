@@ -22,6 +22,11 @@ const fixture = join(import.meta.dirname, "fixtures", "native-watch");
 const checked = join(fixture, "checked.ts");
 const configFile = join(fixture, "tsconfig.json");
 const trigger = join(fixture, "trigger.js");
+// Outside anything webpack watches for the build itself.
+const base = join(
+  mkdtempSync(join(tmpdir(), "typescript-7-base-")),
+  "tsconfig.json",
+);
 
 describe("typescript 7", () => {
   let watch;
@@ -32,6 +37,7 @@ describe("typescript 7", () => {
     rmSync(checked, { force: true });
     rmSync(configFile, { force: true });
     rmSync(trigger, { force: true });
+    rmSync(base, { force: true });
   });
 
   it("should load the native API only for TypeScript 7 and later", async () => {
@@ -224,4 +230,62 @@ describe("typescript 7", () => {
       done();
     });
   });
+
+  it(
+    "should check again once a config file it extends changes",
+    { timeout: 20000 },
+    (t, done) => {
+      writeFileSync(
+        base,
+        `${JSON.stringify({ compilerOptions: { noImplicitAny: false } })}\n`,
+      );
+      writeFileSync(
+        configFile,
+        `${JSON.stringify({
+          extends: base,
+          compilerOptions: { skipLibCheck: true },
+          include: ["*.ts"],
+        })}\n`,
+      );
+      writeFileSync(trigger, "export const trigger = 1;\n");
+      // Fine until `noImplicitAny`, which TypeScript 7 turns on by default, is.
+      writeFileSync(
+        checked,
+        "export function same(value) {\n  return value;\n}\n",
+      );
+
+      let strict = false;
+
+      // Webpack reads a config file and what it extends to resolve with, and
+      // watches them for that; turned off, only the check can watch them.
+      watch = pack(
+        "native-watch",
+        { typescriptPath },
+        { resolve: { tsconfig: false } },
+      ).watch({}, (err, stats) => {
+        assert.strictEqual(err, null);
+
+        if (!strict) {
+          if (stats.hasErrors()) return;
+
+          strict = true;
+          // Once the rebuilds webpack starts for what was written before it
+          // watched are over, so that only the watch on this file can start one.
+          setTimeout(() => {
+            writeFileSync(
+              base,
+              `${JSON.stringify({ compilerOptions: { noImplicitAny: true } })}\n`,
+            );
+          }, 1000);
+
+          return;
+        }
+
+        if (!stats.hasErrors()) return;
+
+        assert.match(stats.compilation.errors[0].message, /TS7006/u);
+        done();
+      });
+    },
+  );
 });
