@@ -6,6 +6,7 @@ import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 
+import { keptFor } from "../compiler-state.js";
 import { omitPluginOptions } from "../utils.js";
 
 /** @typedef {import("../options.js").CheckOptions} Options */
@@ -17,7 +18,7 @@ import { omitPluginOptions } from "../utils.js";
  * hands them back, and the program that type checked them.
  * What a run of the check answers with: what it found, and what a watcher has
  * to follow for it to answer the same way again.
- * @typedef {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[], writes: string[] }} Found
+ * @typedef {{ diagnostics: Diagnostic[], host: EXPECTED_ANY, files: string[], directories: string[], writes: string[], extensions: string[] }} Found
  */
 
 /**
@@ -25,9 +26,6 @@ import { omitPluginOptions } from "../utils.js";
  */
 
 const nodeRequire = createRequire(import.meta.url);
-
-/** @type {WeakMap<EXPECTED_ANY, Map<string, Held>>} */
-const heldByCompiler = new WeakMap();
 
 /**
  * A program is kept for the compiler that built it, so that a rebuild type
@@ -37,32 +35,18 @@ const heldByCompiler = new WeakMap();
  * @returns {Held} what the last compilation left behind
  */
 function getHeld(compiler, id) {
-  let checks = heldByCompiler.get(compiler);
-
-  if (!checks) {
-    checks = new Map();
-    heldByCompiler.set(compiler, checks);
-  }
-
-  let held = checks.get(id);
-
-  if (!held) {
-    held = {
-      signature: "",
-      files: new Map(),
-      seen: new Set(),
-      missing: new Set(),
-      host: undefined,
-      program: undefined,
-      programs: new Map(),
-      readAt: 0,
-      dropped: new Map(),
-      declarations: new Map(),
-    };
-    checks.set(id, held);
-  }
-
-  return held;
+  return keptFor(compiler, `typescript-held\0${id}`, () => ({
+    signature: "",
+    files: new Map(),
+    seen: new Set(),
+    missing: new Set(),
+    host: undefined,
+    program: undefined,
+    programs: new Map(),
+    readAt: 0,
+    dropped: new Map(),
+    declarations: new Map(),
+  }));
 }
 
 /**
@@ -224,6 +208,23 @@ function writing(options) {
     compilerOptions,
     keeps: (file) => suffixes.some((suffix) => file.endsWith(suffix)),
   };
+}
+
+/**
+ * What a file the config file's `include` picks up ends in, as TypeScript
+ * says for the options it reads them under: a script appearing in one of the
+ * directories the config file covers is one a rebuild has to check.
+ * @param {TypeScript} ts the loaded TypeScript
+ * @param {EXPECTED_ANY} compilerOptions the options the program is built with
+ * @returns {string[]} the extensions, with their dots
+ */
+function extensionsOf(ts, compilerOptions) {
+  return ts
+    .getSupportedExtensionsWithJsonIfResolveJsonModule(
+      compilerOptions,
+      ts.getSupportedExtensions(compilerOptions),
+    )
+    .flat();
 }
 
 /**
@@ -393,7 +394,15 @@ function buildSolution(ts, options, configFile, host, unrecoverable, held) {
     if (!held.seen.has(file)) held.files.delete(file);
   }
 
-  return { diagnostics, host, files, directories, writes };
+  // Each project reads its own; a script any of them reads is one to check.
+  return {
+    diagnostics,
+    host,
+    files,
+    directories,
+    writes,
+    extensions: extensionsOf(ts, { allowJs: true, resolveJsonModule: true }),
+  };
 }
 
 /**
@@ -485,6 +494,14 @@ function declarationDiagnostics(held, program) {
  * @returns {Found} what it found, and what it read to find it
  */
 function check(ts, options, held) {
+  // A native compiler ships `typescript/async`, which `loadNative` takes; one
+  // shipping neither has nothing to check through.
+  if (typeof ts.createProgram !== "function") {
+    throw new Error(
+      `TypeScript ${ts.version} offers no compiler API to check with, and no \`typescript/async\` either: TypeScript 7 is checked through \`typescript/async\` from 7.1.`,
+    );
+  }
+
   const context = String(options.context);
   const configFile =
     options.configFile ||
@@ -545,6 +562,7 @@ function check(ts, options, held) {
       files: [configFile],
       directories: [],
       writes: [],
+      extensions: [],
     };
   }
 
@@ -614,6 +632,23 @@ function check(ts, options, held) {
     global: true,
     ...options.diagnosticOptions,
   };
+  // The config file decides which files the program holds, so reading it
+  // again is what a change to it takes.
+  const files = [configFile, ...extended, ...parsed.fileNames];
+  // What `include` covers, which is where a file the program has never held
+  // can appear.
+  const directories = Object.keys(parsed.wildcardDirectories || {});
+  const extensions = extensionsOf(ts, parsed.options);
+  /** @type {string[]} */
+  const writes = overrides.noEmit
+    ? []
+    : [
+        parsed.options.outDir,
+        parsed.options.declarationDir,
+        parsed.options.tsBuildInfoFile,
+      ]
+        .filter(Boolean)
+        .map(String);
   const diagnostics = [
     ...unrecoverable,
     ...ts.sortAndDeduplicateDiagnostics([
@@ -629,9 +664,6 @@ function check(ts, options, held) {
     ]),
   ];
 
-  /** @type {string[]} */
-  const writes = [];
-
   if (stateFile) {
     try {
       held.program.emitBuildInfo(
@@ -646,14 +678,6 @@ function check(ts, options, held) {
   }
 
   if (!overrides.noEmit) {
-    for (const written of [
-      parsed.options.outDir,
-      parsed.options.declarationDir,
-      parsed.options.tsBuildInfoFile,
-    ]) {
-      if (written) writes.push(String(written));
-    }
-
     held.program.emit(
       undefined,
       (
@@ -671,17 +695,7 @@ function check(ts, options, held) {
     if (!held.seen.has(file)) held.files.delete(file);
   }
 
-  return {
-    diagnostics,
-    host,
-    // The config file decides which files the program holds, so reading it
-    // again is what a change to it takes.
-    files: [configFile, ...extended, ...parsed.fileNames],
-    // What `include` covers, which is where a file the program has never held
-    // can appear.
-    directories: Object.keys(parsed.wildcardDirectories || {}),
-    writes,
-  };
+  return { diagnostics, host, files, directories, writes, extensions };
 }
 /**
  * What a diagnostic says, as data: a `Diagnostic` holds the source file it was

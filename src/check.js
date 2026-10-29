@@ -6,6 +6,7 @@ import { isAbsolute, join, relative } from "node:path";
 import picomatch from "picomatch";
 
 import DiagnosticError from "./DiagnosticError.js";
+import { keptFor } from "./compiler-state.js";
 import { reportedAs } from "./options.js";
 import { toPosixPath } from "./utils.js";
 
@@ -24,11 +25,14 @@ import { toPosixPath } from "./utils.js";
 /** @typedef {{ lint: (files: string[]) => void, keep: (files: string[]) => void, report: () => Promise<Report>, detach: (report: Promise<Report>) => void }} Runner */
 /** @typedef {Map<string, CheckResult | undefined>} ResultStore */
 
-/** @type {WeakMap<Compilation["compiler"], Map<string, ResultStore>>} */
-const resultStores = new WeakMap();
-
-/** @type {WeakMap<Compilation["compiler"], Map<string, Promise<void>>>} */
-const detachedReports = new WeakMap();
+/**
+ * The runs of a compiler's checks left to finish on their own.
+ * @param {Compilation} compilation compilation
+ * @returns {Map<string, Promise<void>>} each one's report, by check
+ */
+function detachedReportsOf(compilation) {
+  return keptFor(compilation.compiler, "detached-reports", () => new Map());
+}
 
 // A run of a check that is still going, so that two compilers over the same
 // files drive the tool once. It is kept only while it runs: what comes after
@@ -85,22 +89,7 @@ function sharingKey(name, options) {
  * @returns {ResultStore} what the check last found in every file it covered
  */
 function getResultStore(compilation, check) {
-  const { compiler } = compilation;
-  let stores = resultStores.get(compiler);
-
-  if (!stores) {
-    stores = new Map();
-    resultStores.set(compiler, stores);
-  }
-
-  let store = stores.get(check);
-
-  if (!store) {
-    store = new Map();
-    stores.set(check, store);
-  }
-
-  return store;
+  return keptFor(compilation.compiler, `results\0${check}`, () => new Map());
 }
 
 /**
@@ -111,10 +100,7 @@ function getResultStore(compilation, check) {
  * @returns {Promise<void> | undefined} the report still to land, if there is one
  */
 function takeDetachedReport(compilation, check) {
-  const reports = detachedReports.get(compilation.compiler);
-
-  if (!reports) return undefined;
-
+  const reports = detachedReportsOf(compilation);
   const report = reports.get(check);
 
   reports.delete(check);
@@ -490,14 +476,7 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
   function detach(report) {
     detached = true;
 
-    let reports = detachedReports.get(compilation.compiler);
-
-    if (!reports) {
-      reports = new Map();
-      detachedReports.set(compilation.compiler, reports);
-    }
-
-    reports.set(
+    detachedReportsOf(compilation).set(
       checkKey,
       report.then(
         () => {},
@@ -508,5 +487,7 @@ function createCheckRunner(key, { id, name, adapter, options }, compilation) {
 
   return { detach, keep, lint, report };
 }
+
+export { sharingKey };
 
 export default createCheckRunner;

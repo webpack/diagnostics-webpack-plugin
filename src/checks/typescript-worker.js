@@ -70,6 +70,7 @@ async function lintFiles() {
     writes: found.writes,
     missing: [...held.missing],
     seen: [...held.seen],
+    extensions: found.extensions,
   };
 }
 

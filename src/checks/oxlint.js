@@ -274,6 +274,10 @@ export default {
   create,
   resultPath: (/** @type {EXPECTED_ANY} */ result) =>
     /** @type {FileResult} */ (result).filename,
+  // Each run is a process of its own that reads the configuration again, so a
+  // build hands it every file at once rather than a batch at a time while
+  // webpack builds.
+  lintsOnce: () => true,
   readsAcrossFiles,
 };
 

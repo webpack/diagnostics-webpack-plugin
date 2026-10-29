@@ -1,5 +1,4 @@
 export default createCheckRunner;
-export type EXPECTED_ANY = any;
 export type Compilation = import("webpack").Compilation;
 export type CheckResult = import("./checks/index.js").CheckResult;
 export type CheckInstance = import("./checks/index.js").CheckInstance;
@@ -33,6 +32,18 @@ export type Runner = {
   detach: (report: Promise<Report>) => void;
 };
 export type ResultStore = Map<string, CheckResult | undefined>;
+export type EXPECTED_ANY = any;
+/**
+ * What tells one check's run of a tool from another's, so that only two runs
+ * that would do the same work are shared.
+ * @param {string} name the name of the check
+ * @param {EnabledCheck["options"]} options the options it runs under
+ * @returns {string | undefined} the key, or nothing when they cannot be compared
+ */
+export function sharingKey(
+  name: string,
+  options: EnabledCheck["options"],
+): string | undefined;
 /**
  * Creates the runner synchronously so that the compilation hooks are tapped
  * before webpack starts building modules, whatever the tool takes to load. A

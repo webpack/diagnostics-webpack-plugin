@@ -1,4 +1,3 @@
-export type EXPECTED_ANY = any;
 export type TypeScript = EXPECTED_ANY;
 /**
  * What one file imports, as TypeScript resolves it.
@@ -79,7 +78,16 @@ export type Graph = {
    * what each file that changed showed the files importing it, as the last change left it, hashed
    */
   faces: Map<string, string>;
+  /**
+   * what a file TypeScript reads ends in, read from it once
+   */
+  scripts: Set<string> | undefined;
+  /**
+   * the options of a directory no config file covers
+   */
+  fallback: EXPECTED_ANY;
 };
+export type EXPECTED_ANY = any;
 /**
  * Which files a change can have changed what typed linting says of: the ones
  * that changed, and every file importing one of them, however indirectly. A

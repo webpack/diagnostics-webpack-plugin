@@ -14,6 +14,7 @@ export type Found = {
   files: string[];
   directories: string[];
   writes: string[];
+  extensions: string[];
 };
 export type Held = {
   signature: string;

@@ -43,13 +43,13 @@
     "start": "npm run build -- -w",
     "clean": "del-cli dist types",
     "prebuild": "npm run clean",
-    "build:types": "tsc --declaration --emitDeclarationOnly --outDir types && prettier \"types/**/*.{ts,cts,mts}\" --write",
+    "build:types": "node ./node_modules/typescript/bin/tsc --declaration --emitDeclarationOnly --outDir types && prettier \"types/**/*.{ts,cts,mts}\" --write",
     "build": "npm-run-all -p \"build:**\"",
     "security": "npm audit --omit=dev",
     "lint:prettier": "prettier -w --list-different .",
     "lint:code": "eslint --cache .",
     "lint:spelling": "cspell \"**/*.*\"",
-    "lint:types": "tsc --pretty --noEmit",
+    "lint:types": "node ./node_modules/typescript/bin/tsc --pretty --noEmit",
     "lint:schema": "schema-utils precompile --check --minify src/options.json src/checks/biome.json src/checks/eslint.json src/checks/oxlint.json src/checks/stylelint.json src/checks/typescript.json",
     "lint": "npm-run-all -l -p \"lint:**\"",
     "fix:code": "npm run lint:code -- --fix",
@@ -99,6 +99,7 @@
     "schema-utils": "^4.8.0",
     "stylelint": "^17.15.0",
     "typescript": "^6.0.3",
+    "typescript7": "npm:typescript@^7.1.0-beta",
     "webpack": "^5.112.0"
   },
   "peerDependencies": {
@@ -106,7 +107,7 @@
     "eslint": "^9.0.0 || ^10.0.0",
     "oxlint": "^1.0.0",
     "stylelint": "^17.0.0",
-    "typescript": "^5.0.0 || ^6.0.0",
+    "typescript": "^5.0.0 || ^6.0.0 || ^7.1.0-0",
     "webpack": "^5.106.0"
   },
   "peerDependenciesMeta": {

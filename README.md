@@ -344,7 +344,12 @@ pool of workers — so the option means the same thing whatever is being checked
 and a check added later gets it for nothing. ESLint threads its own work from
 9.34.0 under flat config; Stylelint threads none of its own, so it is pooled.
 TypeScript reads a program whole rather than a file at a time, so it is run on
-one worker: what a thread buys it is webpack's own thread back.
+one worker: what a thread buys it is webpack's own thread back. The compilers of
+a `MultiCompiler` whose TypeScript checks are configured alike share that worker
+and the program it holds, rather than each building and keeping one of their
+own. Over 600 files, two compilers built one after the other (`parallelism: 1`)
+went through a watch with one rebuild in 5.6–5.8 s and 9.8–10.4 s of CPU at
+467–483 MB, against 9.7–10.3 s, 18.7–20.0 s and 803–853 MB with a worker each.
 
 Prefer `"auto"` over a count. A check sizes `"auto"` against the machine, where a
 fixed number can end up competing with webpack for the same cores: over three
@@ -383,7 +388,8 @@ drops it before webpack sees it — and this holds for every check, whatever too
 it runs. A change that could reach files some other way — a declaration file
 nothing imports, a `declare global`, a config file, an import that resolves to
 nothing (a stylesheet, an image or another asset webpack bundles aside) — lints
-every file again, as does a project without TypeScript. There,
+every file again, as does a project without TypeScript, or with TypeScript 7,
+whose native compiler has no JavaScript API to read imports through. There,
 an ESLint check with `cache: true` written down keeps ESLint's own cache, which
 answers for a file whose import changed from before the change.
 
@@ -784,6 +790,10 @@ new DiagnosticsPlugin({ checks: ["biome"] });
 Like the oxlint check this runs a binary and reads the JSON it answers with,
 which Biome calls an experimental reporter — a release of its own may move the
 shape, and it is the only reporter carrying the severities this check needs.
+A build hands it every file at once when webpack is done building them, rather
+than in batches while webpack builds: each run reads the configuration and the
+project again. Over 1,500 files that took the CPU of
+the processes from 2.9 s to 2.2 s, and for oxlint from 1.2–1.7 s to 0.3 s.
 
 Biome's project and types rules — `noImportCycles`, `noFloatingPromises` —
 answer for a file from the files it imports, and which rules those are is not
@@ -844,7 +854,8 @@ Not `--reporter`: the check asks for JSON and formats the results itself.
 
 ## TypeScript
 
-Run with `{ use: "typescript" }`, and requires `typescript >= 5`. It type checks
+Run with `{ use: "typescript" }`, and requires `typescript >= 5` (see
+[TypeScript 7](#typescript-7) for the native compiler). It type checks
 the program a `tsconfig.json` describes, so every file that config includes is
 checked whether or not webpack built it, and a type error in a module nothing
 imports yet is still reported. Emit is forced off: webpack writes the output.
@@ -905,6 +916,25 @@ new DiagnosticsPlugin({
   checks: [{ use: "typescript", skipLibCheck: true }],
 });
 ```
+
+### TypeScript 7
+
+TypeScript 7 is a native compiler with no compiler API in JavaScript, so the
+check talks to it through the API it ships instead, `typescript/async`, from
+TypeScript 7.1. TypeScript 7.0 shipped that API only as an unstable preview,
+which the check does not use. The compiler runs in a process of its own, which
+takes the place of [`threads`](#threads), and is kept open while webpack
+watches: a rebuild tells it which files webpack saw change. Diagnostics are
+printed by TypeScript's own formatter, as `tsc --pretty` prints them.
+
+It checks the project as its config file describes it, so [`build`](#build), a
+[`mode`](#mode) that writes, and compiler options written in the plugin are
+reported as unsupported rather than ignored. Compiler options belong in the
+`tsconfig.json` instead; `build` and a writing `mode` have no TypeScript 7
+counterpart.
+
+Over 600 files, a one-shot build with the check took 1.2–1.3 s on TypeScript
+7.1, against 3.8 s on TypeScript 6 without its saved state and 2.0–2.1 s with it.
 
 ### `typescriptPath`
 
