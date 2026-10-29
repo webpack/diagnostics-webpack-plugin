@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.1.0
+
+### Minor Changes
+
+- Lint again the importers of a file changed while webpack watches only when what it shows them changes — the declarations it emits and what it imports — rather than on every edit, such as one to the body of a function or a comment. (by [@alexander-akait](https://github.com/alexander-akait) in [#381](https://github.com/webpack/diagnostics-webpack-plugin/pull/381))
+
+- Lint again every file a change reaches for any check whose results can turn on other files, not only ESLint's typed linting: oxlint with type-aware rules or the import plugin, and Biome, whose project rules read other files. The import graph moves into the plugin, and a new shared `readsAcrossFiles` option answers for any check, including one of your own. (by [@alexander-akait](https://github.com/alexander-akait) in [#373](https://github.com/webpack/diagnostics-webpack-plugin/pull/373))
+
+- Keep what the TypeScript check found between runs in the cache, as a `.tsbuildinfo` for each config file that the next run starts from, so that a second `webpack` run or a restarted dev server checks only what changed since. `cache: false` turns it off. (by [@alexander-akait](https://github.com/alexander-akait) in [#383](https://github.com/webpack/diagnostics-webpack-plugin/pull/383))
+
+- Share the TypeScript check's worker, and the program it holds, between the compilers of a `MultiCompiler` whose TypeScript checks are configured alike. Before, each compiler built and kept its own program. Over 600 files, two compilers building one after the other went through a watch with one rebuild in 5.6–5.8 s, 9.8–10.4 CPU-seconds and 467–483 MB, against 9.7–10.3 s, 18.7–20.0 CPU-seconds and 803–853 MB. Under TypeScript 7 the native compiler's process is shared the same way. (by [@alexander-akait](https://github.com/alexander-akait) in [#392](https://github.com/webpack/diagnostics-webpack-plugin/pull/392))
+
+- Keep ESLint's cache for typed linting when `cache: true` is written down and no TypeScript is installed to follow imports with, trading results in files whose imports changed for speed, as `eslint-webpack-plugin` does. (by [@alexander-akait](https://github.com/alexander-akait) in [#369](https://github.com/webpack/diagnostics-webpack-plugin/pull/369))
+
+- Lint again only the files a change reaches under typed linting — the ones that changed and every file importing them, read with the project's own TypeScript — rather than every file the check covers. (by [@alexander-akait](https://github.com/alexander-akait) in [#370](https://github.com/webpack/diagnostics-webpack-plugin/pull/370))
+
+- Support TypeScript 7 in the TypeScript check, from 7.1. TypeScript 7 has no compiler API in JavaScript, so the check failed to load it at all. The check now runs the native compiler through the API TypeScript ships, `typescript/async`, in a process of its own that stays open while webpack watches and is told which files webpack saw change, and prints diagnostics with TypeScript's own formatter. `build`, a writing `mode`, and compiler options written in the plugin are reported as unsupported under TypeScript 7. TypeScript 7.0, which shipped that API only as an unstable preview, is reported as having no API to check with. Over 600 files, a one-shot build took 1.2–1.3 s on TypeScript 7.1, against 3.8 s on TypeScript 6 without its saved state. (by [@alexander-akait](https://github.com/alexander-akait) in [#392](https://github.com/webpack/diagnostics-webpack-plugin/pull/392))
+
+### Patch Changes
+
+- Keep linting again only what a change reaches in a project importing stylesheets, images or other assets: such an import, which TypeScript resolves to nothing, counted as an import yet to resolve and made every rebuild lint every file again. (by [@alexander-akait](https://github.com/alexander-akait) in [#382](https://github.com/webpack/diagnostics-webpack-plugin/pull/382))
+
+- Tell an asset import from a script one by the extensions TypeScript itself reads, rather than by a list of asset kinds: an import of any other kind of file (`./data.toml`, say) no longer makes every rebuild lint every file again. (by [@alexander-akait](https://github.com/alexander-akait) in [#392](https://github.com/webpack/diagnostics-webpack-plugin/pull/392))
+
+- Hand Biome and oxlint every file at once when webpack is done building them, rather than in batches while it builds: each batch was a process of its own reading the configuration, and for Biome the project, again. (by [@alexander-akait](https://github.com/alexander-akait) in [#392](https://github.com/webpack/diagnostics-webpack-plugin/pull/392))
+
+- Document what settings outside the plugin make it faster: `skipLibCheck`, ESLint's `cacheStrategy: "content"` where CI restores the cache, and `NODE_COMPILE_CACHE`. (by [@alexander-akait](https://github.com/alexander-akait) in [#388](https://github.com/webpack/diagnostics-webpack-plugin/pull/388))
+
+- Document `skipLibCheck` for the TypeScript check, which `fork-ts-checker-webpack-plugin` turns on whatever the config file says. (by [@alexander-akait](https://github.com/alexander-akait) in [#368](https://github.com/webpack/diagnostics-webpack-plugin/pull/368))
+
+- Hand ESLint every file at once when it threads the lint itself, rather than in batches while webpack builds: each batch started ESLint's workers and loaded the configuration and its plugins again. A new adapter hook, `lintsOnce(options)`, says so for any check. (by [@alexander-akait](https://github.com/alexander-akait) in [#377](https://github.com/webpack/diagnostics-webpack-plugin/pull/377))
+
+- Leave the importers of a file be on its first edit in a watch too when what it shows them does not change, rather than only from its second edit on: what each file held is kept once the first build of the watch is over. In a project whose `tsconfig.json` sets `allowJs`, or a `rootDir` a file is outside of, what a TypeScript file shows its importers could not be read at all, so every edit linted every file importing it again; it is now read without the project's own compiler options. Over three hundred modules under typed linting, the first edit of a function's body took a rebuild from 2.0–2.2 s to 0.27–0.35 s. (by [@alexander-akait](https://github.com/alexander-akait) in [#393](https://github.com/webpack/diagnostics-webpack-plugin/pull/393))
+
+- Resolve the imports of every file in a pass of the import graph through one module resolution cache per set of compiler options, rather than looking up the same package or shared module again for every file importing it. (by [@alexander-akait](https://github.com/alexander-akait) in [#385](https://github.com/webpack/diagnostics-webpack-plugin/pull/385))
+
+- Lint every file again, rather than fail, where a project's TypeScript is the native TypeScript 7, which has no API to read what a file imports through: a check reading across files failed with `Cannot read properties of undefined (reading 'readFile')`. (by [@alexander-akait](https://github.com/alexander-akait) in [#392](https://github.com/webpack/diagnostics-webpack-plugin/pull/392))
+
+- Tell a module's file already listed for a check by a set rather than by searching the list, which made collecting files quadratic in the number of modules: 7 s of a 17 s build of 20,000 modules with three checks. (by [@alexander-akait](https://github.com/alexander-akait) in [#376](https://github.com/webpack/diagnostics-webpack-plugin/pull/376))
+
+- Work out the declaration diagnostics of a TypeScript rebuild only for the files a change reached, rather than emitting the declarations of the whole program each time. (by [@alexander-akait](https://github.com/alexander-akait) in [#378](https://github.com/webpack/diagnostics-webpack-plugin/pull/378))
+
+- Report what the TypeScript check found last time on a watch rebuild that changed nothing the program reads or would pick up, such as a stylesheet, rather than parsing the config file and building the program again to learn that. (by [@alexander-akait](https://github.com/alexander-akait) in [#379](https://github.com/webpack/diagnostics-webpack-plugin/pull/379))
+
+- Keep the results of typed linting between runs, against everything each file imports rather than in ESLint's cache, so that a second `webpack` run lints only the files a change reaches instead of all of them again. (by [@alexander-akait](https://github.com/alexander-akait) in [#375](https://github.com/webpack/diagnostics-webpack-plugin/pull/375))
+
 ## 1.0.2
 
 ### Patch Changes
