@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -42,7 +43,10 @@ import { toPosixPath } from "./utils.js";
  * @property {Map<string, string>} configHashes each config file and what it extends, hashed, as the signatures were last read under
  * @property {Map<EXPECTED_ANY, EXPECTED_ANY>} resolutions what each set of compiler options resolved this pass, so that every file in a folder does not look its imports up again
  * @property {Map<string, string>} faces what each file that changed showed the files importing it, as the last change left it, hashed
+ * @property {Map<string, string>} texts what each file held when the watch started, kept until it first changes so that its first change is told from it
+ * @property {Promise<void> | undefined} keeping the reading of what the files held when the watch started, which a rebuild waits for
  * @property {Set<string> | undefined} scripts what a file TypeScript reads ends in, read from it once
+ * @property {string[] | undefined} typed what a TypeScript file, as against a JavaScript one, ends in, read from it once
  * @property {EXPECTED_ANY} fallback the options of a directory no config file covers
  */
 
@@ -102,7 +106,10 @@ function createGraph(ts) {
     configHashes: new Map(),
     resolutions: new Map(),
     faces: new Map(),
+    texts: new Map(),
+    keeping: undefined,
     scripts: undefined,
+    typed: undefined,
     fallback: undefined,
   };
 }
@@ -272,11 +279,24 @@ function faceOf(graph, file, text, imports) {
     return undefined;
   }
 
+  if (!graph.typed) graph.typed = ts.getSupportedExtensions({}).flat();
+
+  // Only TypeScript says when it cannot write a type without a checker: the
+  // exports of a JavaScript file are written `any` without a word, and no
+  // change to them would show.
+  if (
+    !(/** @type {string[]} */ (graph.typed).some((one) => file.endsWith(one)))
+  ) {
+    return undefined;
+  }
+
   const emitted = ts.transpileDeclaration(text, {
     fileName: file,
     reportDiagnostics: true,
+    // Not the project's own options: the old text of a file and the new are
+    // read alike either way, and some of them — `allowJs`, a `rootDir` the
+    // file is outside of — make TypeScript refuse to read one at all.
     compilerOptions: {
-      ...optionsFor(graph, file),
       declaration: true,
       // What an importer's rules read and a project's own emit may drop: a
       // `@deprecated` in a comment, an `@internal` export.
@@ -320,6 +340,8 @@ function affectedFiles(graph, files, changed) {
     graph.configs.clear();
     graph.options.clear();
     graph.faces.clear();
+    // What the files that changed held is not what was linted last any more.
+    for (const file of touched) graph.texts.delete(file);
 
     return undefined;
   }
@@ -331,11 +353,26 @@ function affectedFiles(graph, files, changed) {
   const quiet = new Set();
 
   for (const file of touched) {
-    const before = graph.files.get(file);
+    // What a file held before its first change, kept from when the watch
+    // started, stands in for the face no change has left yet.
+    const kept = graph.texts.get(file);
+    const before =
+      graph.files.get(file) ||
+      (kept === undefined ? undefined : importsOf(graph, file, kept));
 
     // What a file declared for every other one is gone once it changes, as
     // much as what it declares now is new.
-    if (before && (before.global || before.unresolved)) return undefined;
+    if (before && (before.global || before.unresolved)) {
+      // Every file is linted again, against what each one that changed holds
+      // now: what any of them held or showed before says nothing any more.
+      for (const other of touched) {
+        graph.files.delete(other);
+        graph.faces.delete(other);
+        graph.texts.delete(other);
+      }
+
+      return undefined;
+    }
 
     graph.files.delete(file);
 
@@ -343,14 +380,22 @@ function affectedFiles(graph, files, changed) {
 
     if (text === undefined) {
       graph.faces.delete(file);
+      graph.texts.delete(file);
       continue;
     }
 
     const imports = importsOf(graph, file, text);
-    const was = graph.faces.get(file);
-    // Only a file that changed is read for it: the first edit of a file is
-    // taken to reach everything importing it, and the next ones are told from
-    // what it showed after that one.
+    let was = graph.faces.get(file);
+
+    if (was === undefined && kept !== undefined && before) {
+      was = faceOf(graph, file, kept, before);
+    }
+
+    graph.texts.delete(file);
+
+    // Only a file that changed is read for it: one whose text was not kept
+    // when the watch started is taken to reach everything importing it on its
+    // first edit, and the next ones are told from what it showed after that.
     const face = faceOf(graph, file, text, imports);
 
     graph.files.set(file, imports);
@@ -418,6 +463,40 @@ function affectedFiles(graph, files, changed) {
   }
 
   return new Set([...reached].filter((file) => covered.has(file)));
+}
+
+/**
+ * Keeps what each file holds as a watch starts, so that its first change can
+ * be told from what it showed before it as well as every later one is. A file
+ * changed since webpack started reading the file system for the build is left
+ * out: what it holds now may be the change rather than what came before it,
+ * and its first change reaches everything importing it, as without this.
+ * @param {Graph} graph the graph
+ * @param {string[]} files every file the check covers
+ * @param {number} since when webpack started reading the file system for the build
+ * @returns {Promise<void>} once every file is kept or left out
+ */
+async function keepTexts(graph, files, since) {
+  for (const file of files) {
+    const known = toPosixPath(resolve(file));
+
+    if (graph.texts.has(known) || graph.faces.has(known)) continue;
+
+    try {
+      const { mtimeMs } = await stat(known);
+
+      if (mtimeMs >= since) continue;
+
+      const text = await readFile(known, "utf8");
+
+      // Written while it was read.
+      if ((await stat(known)).mtimeMs !== mtimeMs) continue;
+
+      graph.texts.set(known, text);
+    } catch {
+      // Gone, which its next change says.
+    }
+  }
 }
 
 /**
@@ -709,4 +788,4 @@ function signatures(graph, files) {
   return found;
 }
 
-export { affectedFiles, createGraph, getGraph, hashOf, signatures };
+export { affectedFiles, createGraph, getGraph, hashOf, keepTexts, signatures };

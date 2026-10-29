@@ -9,6 +9,7 @@ import createCheckRunner from "./check.js";
 import {
   affectedFiles as affectedFromGraph,
   getGraph,
+  keepTexts,
 } from "./import-graph.js";
 import { getOptions, reportedAs, validateOptions } from "./options.js";
 import {
@@ -136,11 +137,47 @@ async function affectedFiles(compiler, check, files) {
       check.id,
     );
 
-    return graph && affectedFromGraph(graph, files, changed);
+    if (!graph) return undefined;
+
+    // What the files held as the watch started, which a first change is told
+    // from, is read once the first build is over.
+    await graph.keeping;
+
+    return affectedFromGraph(graph, files, changed);
   } catch {
     // Not knowing is answered by linting every file, as before.
     return undefined;
   }
+}
+
+/**
+ * Keeps what the files a check reading across files covers hold as a watch
+ * starts, in the graph it is answered from: the first change of one is then
+ * told from what it held before, as every later one is, rather than taken to
+ * reach every file importing it.
+ * @param {Compiler} compiler compiler
+ * @param {ResolvedCheck} check the check to keep them for
+ * @param {string[]} files every file the check covers
+ * @param {number} since when webpack started reading the file system for the build
+ * @returns {Promise<void>} once they are kept
+ */
+async function keepWatchStart(compiler, check, files, since) {
+  if (check.adapter.affectedFiles || !readsAcrossFiles(compiler, check)) {
+    return;
+  }
+
+  // Neither throws: a graph that cannot be had, or a file that cannot be read,
+  // leaves the first change of a file to reach every file importing it.
+  const graph = await getGraph(
+    compiler,
+    String(check.options.context),
+    check.id,
+  );
+
+  if (!graph) return;
+
+  graph.keeping = keepTexts(graph, files, since);
+  await graph.keeping;
 }
 
 /**
@@ -461,6 +498,14 @@ class DiagnosticsWebpackPlugin {
       generation += 1;
 
       const mine = generation;
+      // The first build of a watch, which webpack started reading the file
+      // system for at this time: what the files hold by its end is kept.
+      const watchStart =
+        compiler.watchMode &&
+        !compiler.modifiedFiles &&
+        !compilation.compiler.isChild()
+          ? compiler.fsStartTime
+          : undefined;
       // Globbing the file system does not depend on the module graph, so a
       // child compilation would only lint what its parent already did.
       const enabled = compilation.compiler.isChild()
@@ -606,6 +651,7 @@ class DiagnosticsWebpackPlugin {
 
         check.collecting = collectFromFileSystem(compiler, check).then(
           (collected) => {
+            check.files.push(...collected.lint, ...collected.keep);
             check.pending.push(...collected.lint);
             check.kept.push(...collected.keep);
             check.flush(true);
@@ -736,6 +782,12 @@ class DiagnosticsWebpackPlugin {
 
             readLast.set(id, { read, missing, directories, writes });
             await watch(check, report);
+
+            if (watchStart !== undefined) {
+              afterBuild.push(() => {
+                keepWatchStart(compiler, check, check.files, watchStart);
+              });
+            }
 
             // `reportAs` has already dropped whatever it reports as `false`,
             // so what is left only needs putting where it belongs.

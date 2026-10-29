@@ -168,8 +168,14 @@ describe("incremental", () => {
      * @param {object} options plugin options
      * @param {(files: string[]) => void} check what to say of what the rebuild linted
      * @param {() => void} done done
+     * @param {() => void} edit what changes once the first build is over
      */
-    const rebuild = (options, check, done) => {
+    const rebuild = (
+      options,
+      check,
+      done,
+      edit = () => writeFileSync(leaf, "const leaf = 2;\n"),
+    ) => {
       let first = true;
 
       watch = pack("watch", { eslintPath, ...options }).watch({}, (err) => {
@@ -179,7 +185,7 @@ describe("incremental", () => {
           first = false;
           require(eslintPath)._reset();
           require(eslintPath)._readAcrossFiles(true);
-          writeFileSync(leaf, "const leaf = 2;\n");
+          edit();
 
           return;
         }
@@ -189,6 +195,59 @@ describe("incremental", () => {
         done();
       });
     };
+
+    it("should leave the importers of a file be on its first change when what they see of it holds", (t, done) => {
+      // TypeScript, which what a file shows its importers is read from.
+      const faceLeaf = join(
+        import.meta.dirname,
+        "fixtures",
+        "watch-face-leaf.ts",
+      );
+      const faceEntry = join(
+        import.meta.dirname,
+        "fixtures",
+        "watch-face-entry.ts",
+      );
+      const past = new Date(Date.now() - 60_000);
+
+      writeThree();
+      writeFileSync(
+        faceLeaf,
+        "export function leaf(): number {\n  return 1;\n}\n",
+      );
+      writeFileSync(
+        faceEntry,
+        'import { leaf } from "./watch-face-leaf";\nexport const entry = leaf();\n',
+      );
+
+      for (const file of [faceLeaf, faceEntry]) utimesSync(file, past, past);
+
+      const forget = () => {
+        rmSync(other, { force: true });
+        rmSync(faceLeaf, { force: true });
+        rmSync(faceEntry, { force: true });
+      };
+
+      rebuild(
+        { files: ["watch-face-leaf.ts", "watch-face-entry.ts"] },
+        (files) => {
+          forget();
+          assert.strictEqual(files.length, 1);
+          assert.match(files[0], /watch-face-leaf\.ts/u);
+        },
+        done,
+        // Its body only: what the entry sees of it is the same. Made once what
+        // the files held as the watch started has been read, which a change
+        // made before then would be read as.
+        () =>
+          setTimeout(() => {
+            writeFileSync(
+              faceLeaf,
+              "export function leaf(): number {\n  return 2;\n}\n",
+            );
+          }, 1000),
+      );
+    });
 
     it("should lint again what a change reaches among the files it globs", (t, done) => {
       writeThree();
