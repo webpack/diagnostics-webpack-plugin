@@ -15,6 +15,7 @@ import {
   affectedFiles,
   createGraph,
   getGraph,
+  keepTexts,
   signatures,
 } from "../src/import-graph.js";
 import { toPosixPath } from "../src/utils.js";
@@ -90,6 +91,97 @@ describe("import graph", () => {
     };
 
     it("should leave its importers be once only its body or comments change", () => {
+      assert.deepStrictEqual(
+        twice(
+          "leaf.ts",
+          "export const leaf: number = 2;\n",
+          "// a note\nexport const leaf: number = 3;\n",
+        ),
+        ["leaf.ts"],
+      );
+    });
+
+    describe("on its first change of a watch", () => {
+      // Kept as a build that started reading the file system now would.
+      const keep = () => keepTexts(graph, all.map(at), Date.now() + 1000);
+
+      it("should leave its importers be once only its body or comments change", async () => {
+        await keep();
+        write("leaf.ts", "// a note\nexport const leaf = 1;\n");
+
+        assert.deepStrictEqual(affected(all, ["leaf.ts"]), ["leaf.ts"]);
+      });
+
+      it("should reach its importers once a type it exports changes", async () => {
+        await keep();
+        write("leaf.ts", 'export const leaf = "1";\n');
+
+        assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+          "leaf.ts",
+          "middle.ts",
+          "top.ts",
+        ]);
+      });
+
+      it("should reach its importers once it declares something global", async () => {
+        write(
+          "leaf.ts",
+          "declare global { const shared: number }\nexport {};\n",
+        );
+        await keep();
+        write("leaf.ts", "export const leaf = 1;\n");
+
+        assert.strictEqual(affected(all, ["leaf.ts"]), undefined);
+      });
+
+      it("should reach its importers when it changed after the build started reading it", async () => {
+        // Written since: what is there may be the change itself.
+        await keepTexts(graph, all.map(at), 0);
+        write("leaf.ts", "// a note\nexport const leaf = 1;\n");
+
+        assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+          "leaf.ts",
+          "middle.ts",
+          "top.ts",
+        ]);
+      });
+
+      it("should keep what it held only until it first changes", async () => {
+        await keep();
+        write("leaf.ts", 'export const leaf = "1";\n');
+        affected(all, ["leaf.ts"]);
+        // Kept again, as a second build of the watch would not, it is not
+        // read over what its first change left.
+        await keep();
+        write("leaf.ts", '// a note\nexport const leaf = "1";\n');
+
+        assert.deepStrictEqual(affected(all, ["leaf.ts"]), ["leaf.ts"]);
+      });
+
+      it("should forget a file that has gone", async () => {
+        await keep();
+        rmSync(at("alone.ts"));
+
+        assert.deepStrictEqual(affected(all, ["alone.ts"]), ["alone.ts"]);
+        assert.strictEqual(graph.texts.has(toPosixPath(at("alone.ts"))), false);
+      });
+    });
+
+    it("should leave its importers be in a project that also checks JavaScript", () => {
+      // Options a declaration of the file alone cannot be read under.
+      write(
+        "tsconfig.json",
+        JSON.stringify({
+          compilerOptions: {
+            strict: true,
+            moduleResolution: "bundler",
+            allowJs: true,
+            checkJs: true,
+            rootDir: "./src",
+          },
+        }),
+      );
+
       assert.deepStrictEqual(
         twice(
           "leaf.ts",

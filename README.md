@@ -397,10 +397,13 @@ A file changed while webpack watches reaches its importers only when what it
 shows them changes: the declarations it emits and what it imports. Edit the
 body of a function or a comment and only that file is linted again — told
 apart by `ts.transpileDeclaration` (TypeScript 5.5 and later), which needs no
-type checker and so answers only for a file whose exports say their own types,
-and only from the second edit of a file on, the first being what it is told
-from. Over three hundred modules in a chain, editing one halfway along took a
-typed-linting rebuild from 1.1–1.4 s to 0.16–0.2 s.
+type checker and so answers only for a TypeScript file whose exports say their
+own types. What each file held as the watch started is kept once the first
+build is over, so the first edit of a file is told apart too; a file written
+after webpack started reading the file system for that build is not kept, and
+its first edit reaches every file importing it. Over three hundred modules in a
+chain, editing one halfway along took a typed-linting rebuild from 1.1–1.4 s to
+0.16–0.2 s, and the first edit of it from 2.0–2.2 s to 0.27–0.35 s.
 
 Left out, each check reads it from its tool's configuration:
 
