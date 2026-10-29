@@ -340,6 +340,8 @@ function affectedFiles(graph, files, changed) {
     graph.configs.clear();
     graph.options.clear();
     graph.faces.clear();
+    // What the files that changed held is not what was linted last any more.
+    for (const file of touched) graph.texts.delete(file);
 
     return undefined;
   }
@@ -360,7 +362,17 @@ function affectedFiles(graph, files, changed) {
 
     // What a file declared for every other one is gone once it changes, as
     // much as what it declares now is new.
-    if (before && (before.global || before.unresolved)) return undefined;
+    if (before && (before.global || before.unresolved)) {
+      // Every file is linted again, against what each one that changed holds
+      // now: what any of them held or showed before says nothing any more.
+      for (const other of touched) {
+        graph.files.delete(other);
+        graph.faces.delete(other);
+        graph.texts.delete(other);
+      }
+
+      return undefined;
+    }
 
     graph.files.delete(file);
 

@@ -158,6 +158,37 @@ describe("import graph", () => {
         assert.deepStrictEqual(affected(all, ["leaf.ts"]), ["leaf.ts"]);
       });
 
+      it("should forget what a file held once a change linted every file", async () => {
+        write(
+          "global.ts",
+          "declare global { const shared: number }\nexport {};\n",
+        );
+        await keepTexts(
+          graph,
+          [...all, "global.ts"].map(at),
+          Date.now() + 1000,
+        );
+        // Linted again with every file: the global one changed alongside.
+        write(
+          "global.ts",
+          "declare global { const shared: string }\nexport {};\n",
+        );
+        write("leaf.ts", 'export const leaf = "1";\n');
+        assert.strictEqual(
+          affected([...all, "global.ts"], ["global.ts", "leaf.ts"]),
+          undefined,
+        );
+        // Back as it was before the watch, which is not what its importers
+        // were last linted against.
+        write("leaf.ts", "export const leaf = 1;\n");
+
+        assert.deepStrictEqual(affected(all, ["leaf.ts"]), [
+          "leaf.ts",
+          "middle.ts",
+          "top.ts",
+        ]);
+      });
+
       it("should forget a file that has gone", async () => {
         await keep();
         rmSync(at("alone.ts"));
