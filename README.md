@@ -1384,8 +1384,8 @@ If you're new here, please take a moment to review our contributing guidelines.
 [npm-url]: https://npmjs.com/package/diagnostics-webpack-plugin
 [node]: https://img.shields.io/node/v/diagnostics-webpack-plugin.svg
 [node-url]: https://nodejs.org
-[tests]: https://github.com/webpack/diagnostics-webpack-plugin/workflows/diagnostics-webpack-plugin/badge.svg
-[tests-url]: https://github.com/webpack/diagnostics-webpack-plugin/actions
+[tests]: https://github.com/webpack/diagnostics-webpack-plugin/actions/workflows/nodejs.yml/badge.svg
+[tests-url]: https://github.com/webpack/diagnostics-webpack-plugin/actions/workflows/nodejs.yml
 [cover]: https://codecov.io/gh/webpack/diagnostics-webpack-plugin/branch/main/graph/badge.svg
 [cover-url]: https://codecov.io/gh/webpack/diagnostics-webpack-plugin
 [discussion]: https://img.shields.io/github/discussions/webpack/webpack
