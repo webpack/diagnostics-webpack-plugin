@@ -758,31 +758,133 @@ function signatures(graph, files) {
 
     return described;
   };
+  // Every file reaching another is signed by what that one is signed by, so a
+  // change anywhere below a file changes it, and each file is read once rather
+  // than once per file importing it. The files of an import cycle reach the
+  // same files, and are signed together, as strongly connected components.
   /** @type {Map<string, string>} */
-  const found = new Map();
+  const signed = new Map();
+  /** @type {Map<string, number>} */
+  const order = new Map();
+  /** @type {Map<string, number>} */
+  const lowest = new Map();
+  /** @type {string[]} */
+  const open = [];
+  /** @type {Set<string>} */
+  const onOpen = new Set();
 
-  for (const file of wanted) {
-    if (!graph.reads.has(file)) continue;
+  /**
+   * @param {string} file the file, as a posix path
+   */
+  const enter = (file) => {
+    order.set(file, order.size);
+    lowest.set(file, order.size - 1);
+    open.push(file);
+    onOpen.add(file);
+  };
+
+  /**
+   * Signs the cycle `file` opened, now that everything it imports is signed.
+   * @param {string} file the first file of the cycle reached
+   */
+  const close = (file) => {
+    /** @type {Set<string>} */
+    const members = new Set();
+
+    for (let member = open.pop(); ; member = open.pop()) {
+      const known = /** @type {string} */ (member);
+
+      onOpen.delete(known);
+      members.add(known);
+
+      if (known === file) break;
+    }
 
     /** @type {string[]} */
     const parts = [];
-    const seen = new Set([file]);
-    const queue = [file];
+    /** @type {Set<string>} */
+    const below = new Set();
 
-    for (let next = queue.pop(); next !== undefined; next = queue.pop()) {
-      const described = describe(next);
+    for (const member of members) {
+      const described = describe(member);
 
       parts.push(...described.parts);
 
       for (const target of described.imports) {
-        if (!seen.has(target)) {
-          seen.add(target);
-          queue.push(target);
+        if (!members.has(target)) {
+          below.add(/** @type {string} */ (signed.get(target)));
         }
       }
     }
 
-    found.set(file, hashOf(`${project}\n${parts.toSorted().join("\n")}`));
+    const signature = hashOf(
+      `${parts.toSorted().join("\n")}\n\n${[...below].toSorted().join("\n")}`,
+    );
+
+    for (const member of members) signed.set(member, signature);
+  };
+
+  for (const root of wanted) {
+    if (!graph.reads.has(root) || order.has(root)) continue;
+
+    enter(root);
+
+    /** @type {[string, number][]} */
+    const stack = [[root, 0]];
+
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1];
+      const [file, next] = frame;
+      const { imports } = describe(file);
+
+      if (next < imports.length) {
+        const target = imports[next];
+
+        frame[1] = next + 1;
+
+        if (!order.has(target)) {
+          enter(target);
+          stack.push([target, 0]);
+        } else if (onOpen.has(target)) {
+          lowest.set(
+            file,
+            Math.min(
+              /** @type {number} */ (lowest.get(file)),
+              /** @type {number} */ (order.get(target)),
+            ),
+          );
+        }
+
+        continue;
+      }
+
+      stack.pop();
+
+      if (stack.length > 0) {
+        const [parent] = stack[stack.length - 1];
+
+        lowest.set(
+          parent,
+          Math.min(
+            /** @type {number} */ (lowest.get(parent)),
+            /** @type {number} */ (lowest.get(file)),
+          ),
+        );
+      }
+
+      if (lowest.get(file) === order.get(file)) close(file);
+    }
+  }
+
+  /** @type {Map<string, string>} */
+  const found = new Map();
+
+  for (const file of wanted) {
+    const signature = signed.get(file);
+
+    if (signature !== undefined) {
+      found.set(file, hashOf(`${project}\n${signature}`));
+    }
   }
 
   return found;

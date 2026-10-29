@@ -669,6 +669,52 @@ describe("signatures", () => {
     assert.ok(changed(moved, sign()).includes("leaf.ts"));
   });
 
+  it("should change for every file of an import cycle, and what imports it, when one of them changes", () => {
+    write(
+      "leaf.ts",
+      'import { m } from "./middle";\nexport const leaf = 1;\nexport const n = m;\n',
+    );
+
+    const before = sign();
+
+    write(
+      "leaf.ts",
+      'import { m } from "./middle";\nexport const leaf = 2;\nexport const n = m;\n',
+    );
+
+    assert.deepStrictEqual(changed(before, sign()), [
+      "leaf.ts",
+      "middle.ts",
+      "top.ts",
+    ]);
+  });
+
+  it("should change for an import cycle when a file it imports changes", () => {
+    write(
+      "leaf.ts",
+      'import { m } from "./middle";\nimport { alone } from "./alone";\nexport const leaf = alone;\nexport const n = m;\n',
+    );
+
+    const before = sign();
+
+    write("alone.ts", "export const alone = 2;\n");
+
+    assert.deepStrictEqual(changed(before, sign()), names);
+  });
+
+  it("should not change for an import cycle when a file importing it changes", () => {
+    write(
+      "leaf.ts",
+      'import { m } from "./middle";\nexport const leaf = 1;\nexport const n = m;\n',
+    );
+
+    const before = sign();
+
+    write("top.ts", 'import { m } from "./middle";\nexport const t = 2;\n');
+
+    assert.deepStrictEqual(changed(before, sign()), ["top.ts"]);
+  });
+
   it("should change once an import that resolved to nothing does", () => {
     write(
       "alone.ts",
