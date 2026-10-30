@@ -177,35 +177,38 @@ describe("incremental", () => {
       edit = () => writeFileSync(leaf, "const leaf = 2;\n"),
     ) => {
       let first = true;
-      let edited = false;
+      let editedAt = Infinity;
 
-      watch = pack("watch", { eslintPath, ...options }).watch({}, (err) => {
-        assert.strictEqual(err, null);
+      watch = pack("watch", { eslintPath, ...options }).watch(
+        {},
+        (err, stats) => {
+          assert.strictEqual(err, null);
 
-        if (first) {
-          first = false;
-          require(eslintPath)._reset();
-          require(eslintPath)._readAcrossFiles(true);
-          Promise.resolve(edit()).then(() => {
-            edited = true;
-          });
+          if (first) {
+            first = false;
+            require(eslintPath)._reset();
+            require(eslintPath)._readAcrossFiles(true);
+            Promise.resolve(edit()).then(() => {
+              editedAt = Date.now();
+            });
 
-          return;
-        }
+            return;
+          }
 
-        // A rebuild before the edit is not the one under test: on Windows,
-        // webpack's watcher reads the fixtures just written as changed.
-        if (!edited) {
-          require(eslintPath)._reset();
-          require(eslintPath)._readAcrossFiles(true);
+          // A rebuild started before the edit is not the one under test: on
+          // Windows, webpack's watcher reads the fixtures just written as changed.
+          if (stats.startTime < editedAt) {
+            require(eslintPath)._reset();
+            require(eslintPath)._readAcrossFiles(true);
 
-          return;
-        }
+            return;
+          }
 
-        rmSync(other, { force: true });
-        check(linted());
-        done();
-      });
+          rmSync(other, { force: true });
+          check(linted());
+          done();
+        },
+      );
     };
 
     it("should leave the importers of a file be on its first change when what they see of it holds", (t, done) => {
