@@ -741,6 +741,36 @@ describe("signatures", () => {
     assert.strictEqual(reads, once);
   });
 
+  it("should read nothing again when a later batch reaches another config file", () => {
+    mkdirSync(at("a"));
+    mkdirSync(at("b"));
+    write("a/tsconfig.json", "{}");
+    write("b/tsconfig.json", "{}");
+    write("a/one.ts", "export const one = 1;\n");
+    write("b/two.ts", "export const two = 2;\n");
+
+    /** @type {Map<string, number>} */
+    const reads = new Map();
+    const counted = createGraph({
+      ...ts,
+      sys: {
+        ...ts.sys,
+        readFile: (file, encoding) => {
+          reads.set(file, (reads.get(file) || 0) + 1);
+
+          return ts.sys.readFile(file, encoding);
+        },
+      },
+    });
+    const sign = createSigner(counted);
+
+    sign([at("a/one.ts")]);
+    sign([at("b/two.ts")]);
+
+    assert.strictEqual(reads.get(toPosixPath(at("a/one.ts"))), 1);
+    assert.strictEqual(reads.get(toPosixPath(at("b/two.ts"))), 1);
+  });
+
   it("should sign files in batches as it signs them at once", () => {
     const whole = sign();
     const sign2 = createSigner(createGraph(ts));

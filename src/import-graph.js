@@ -835,12 +835,14 @@ function createSigner(graph) {
     let configs = readConfigs();
 
     // A config file that changed decides how every import resolves, so what was
-    // read under it is read again, under it as it is now.
+    // read under it is read again, under it as it is now. One first reached in
+    // this batch has nothing read under it yet.
     if (
       [...configs].some(
-        ([config, { hash }]) => graph.configHashes.get(config) !== hash,
-      ) &&
-      graph.configHashes.size > 0
+        ([config, { hash }]) =>
+          graph.configHashes.has(config) &&
+          graph.configHashes.get(config) !== hash,
+      )
     ) {
       graph.reads.clear();
       graph.options.clear();
