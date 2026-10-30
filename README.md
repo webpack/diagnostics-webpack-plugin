@@ -342,7 +342,8 @@ many; `false`, `0` or `1` keeps the work on webpack's own thread.
 A check that threads its own work is asked to, and one that cannot is run in a
 pool of workers — so the option means the same thing whatever is being checked,
 and a check added later gets it for nothing. ESLint threads its own work from
-9.34.0 under flat config; Stylelint threads none of its own, so it is pooled.
+9.34.0 under flat config; Stylelint threads none of its own, so it is pooled
+once a batch is big enough to pay for the workers — see [Stylelint](#stylelint).
 TypeScript reads a program whole rather than a file at a time, so it is run on
 one worker: what a thread buys it is webpack's own thread back. The compilers of
 a `MultiCompiler` whose TypeScript checks are configured alike share that worker
@@ -706,6 +707,13 @@ Suppressions need ESLint 9.24 or later. ESLint 10 takes both options itself; bel
 Run with `{ use: "stylelint" }`, and requires `stylelint >= 17`. It lints every file matching `files` and `extensions` on disk, whether or not webpack imported it, so a stylesheet nothing imports yet is still checked.
 
 Alongside the shared options you can pass any [Stylelint option](https://stylelint.io/user-guide/usage/node-api#options) — they are handed to `stylelint.lint()` as they are.
+
+Under [`threads`](#threads), the stylesheets of a batch are linted over a pool
+of workers only once they add up to 2 MB, and on webpack's thread below that:
+each worker loads Stylelint and its config again, which costs more than small
+stylesheets take to lint. Over 791 files with `stylelint-config-standard-scss`
+on four cores, a pool was 1–2 s slower and 130–190 MB bigger up to 0.9 MB of
+stylesheets, and 4 s faster at 4.5 MB.
 
 ### `stylelintPath`
 
@@ -1095,6 +1103,10 @@ plugin decide how much of it is paid again. Each was measured on four cores.
 file the program reads is most of a first build; see
 [TypeScript](#typescript).
 
+**`transpileOnly` for `ts-loader` beside the TypeScript check.** Otherwise the
+program is type checked twice; see
+[From `fork-ts-checker-webpack-plugin`](#from-fork-ts-checker-webpack-plugin).
+
 **`cacheStrategy: "content"` where CI restores the cache.** ESLint keys its
 cache on each file's time and size by default, and a fresh checkout gives every
 file a new time, so a cache restored in CI answers for nothing. Keyed on what
@@ -1328,7 +1340,30 @@ is the thread rather than anything clever.
 wrote — the `fork-ts-checker-webpack-plugin` example that `ts-loader` ships,
 which is React and TSX through `ts-loader`. Swapping the plugin for
 `{ use: "typescript" }` and nothing else reported the same `TS2322` at the same
-line and column. Three things to expect while doing it:
+line and column. Four things to expect while doing it:
+
+- **Set `transpileOnly: true` on `ts-loader`.** `ts-loader` turns it on by
+  itself when it sees `ForkTsCheckerWebpackPlugin` in the config, so a config
+  that never wrote it starts type checking the whole program inside the build
+  again once that plugin is gone — next to the check, which does the same work
+  — and reports every type error twice. Over 859 files of React and SCSS, with
+  typed ESLint and Stylelint beside it, writing it took a cold build from
+  24.5–25.2 s and 1.56 GB to 19.1–19.2 s and 1.3–1.4 GB, where the build with
+  that plugin took 17.6–20.3 s and 1.28–1.39 GB before the migration:
+
+  ```js
+  module.exports = {
+    module: {
+      rules: [
+        {
+          test: /\.tsx?$/,
+          loader: "ts-loader",
+          options: { transpileOnly: true },
+        },
+      ],
+    },
+  };
+  ```
 
 - **webpack must be 5.106 or newer**, which is what the plugin requires at all.
 - **`npm` refuses to install alongside ESLint 8.** The `eslint` peer here is
