@@ -1,6 +1,7 @@
 // eslint-disable-next-line jsdoc/reject-any-type
 /** @typedef {any} EXPECTED_ANY */
 
+import { statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -108,6 +109,32 @@ function arrifyFiles(files) {
 }
 
 /**
+ * What a batch of stylesheets adds up to before a pool pays for starting it:
+ * each worker loads Stylelint and its config again. Over 791 files with
+ * `stylelint-config-standard-scss`, a pool was 1–2 s slower and 130–190 MB
+ * bigger up to 0.9 MB of stylesheets, and 4 s faster at 4.5 MB.
+ */
+const POOL_WORTH_STARTING = 2 * 1024 * 1024;
+
+/**
+ * @param {string[]} files the files of a batch
+ * @returns {number} what they add up to, in bytes
+ */
+function sizeOf(files) {
+  let size = 0;
+
+  for (const file of files) {
+    try {
+      size += statSync(file).size;
+    } catch {
+      // Gone, which Stylelint says when it reads it.
+    }
+  }
+
+  return size;
+}
+
+/**
  * @param {string} cacheKey the key the loaded stylelint is cached under
  * @param {number} poolSize number of workers
  * @param {Options} options options
@@ -116,27 +143,37 @@ function arrifyFiles(files) {
 function loadStylelintThreaded(cacheKey, poolSize, options) {
   const source = fileURLToPath(import.meta.resolve("./stylelint-worker.js"));
   const local = loadStylelint(options);
-
-  // Stylelint threads nothing of its own, so the plugin's pool runs it — the
-  // same pool every check that cannot thread itself is spread over.
-  let pool = createPool(source, poolSize, [
-    options,
-    getStylelintOptions(options),
-  ]);
-
-  if (!pool) return local;
+  /**
+   * Started by the first batch big enough to pay for it, and kept for the
+   * next one; `null` once it cannot be.
+   * @type {import("../threads.js").Pool | null | undefined}
+   */
+  let pool;
 
   /** @type {Loaded} */
   const context = {
     ...local,
     threads: poolSize,
-    lintFiles: async (files) =>
-      /* istanbul ignore next */
-      pool ? pool.lintFiles(arrifyFiles(files)) : local.lintFiles(files),
+    lintFiles: async (files) => {
+      const list = arrifyFiles(files);
+
+      if (sizeOf(list) < POOL_WORTH_STARTING) return local.lintFiles(list);
+
+      // Stylelint threads nothing of its own, so the plugin's pool runs it —
+      // the same pool every check that cannot thread itself is spread over.
+      if (pool === undefined) {
+        pool = createPool(source, poolSize, [
+          options,
+          getStylelintOptions(options),
+        ]);
+      }
+
+      return pool ? pool.lintFiles(list) : local.lintFiles(list);
+    },
     cleanup: async () => {
       cache[cacheKey] = local;
       context.lintFiles = (files) => local.lintFiles(files);
-      /* istanbul ignore next */
+
       if (pool) {
         await pool.end();
         pool = null;

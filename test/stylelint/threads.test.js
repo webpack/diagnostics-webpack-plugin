@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 
@@ -48,6 +50,63 @@ describe("Threading", () => {
       assert.strictEqual(bad[0].errored, true);
     } finally {
       threaded.cleanup();
+    }
+  });
+
+  it("should lint a small batch on webpack's thread and a big one over the pool", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stylelint-pool-"));
+    const small = toPosixPath(join(dir, "small.scss"));
+    const big = toPosixPath(join(dir, "big.scss"));
+    const stylelintPath = join(import.meta.dirname, "mock/stylelint-recorder");
+
+    // What the recorder saw on this thread: a batch the pool lints is recorded
+    // in the worker's copy of it instead.
+    const mock = require(stylelintPath);
+
+    writeFileSync(small, "a { color: red; }\n");
+    writeFileSync(big, `/* ${"x".repeat(3 * 1024 * 1024)} */\n`);
+    mock._reset();
+
+    const threaded = getLoadedStylelint("sized", { threads: 2, stylelintPath });
+
+    try {
+      await threaded.lintFiles([small, join(dir, "gone.scss")]);
+
+      assert.strictEqual(mock._calls.length, 1);
+
+      await threaded.lintFiles([big]);
+
+      assert.strictEqual(mock._calls.length, 1);
+    } finally {
+      await threaded.cleanup();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("should lint a big batch on webpack's thread when its options cannot reach a worker", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stylelint-pool-"));
+    const big = toPosixPath(join(dir, "big.scss"));
+    const stylelintPath = join(import.meta.dirname, "mock/stylelint-recorder");
+
+    const mock = require(stylelintPath);
+
+    writeFileSync(big, `/* ${"x".repeat(3 * 1024 * 1024)} */\n`);
+    mock._reset();
+
+    // A function is not something a worker can be handed.
+    const threaded = getLoadedStylelint("with-function", {
+      threads: 2,
+      stylelintPath,
+      formatter: () => "",
+    });
+
+    try {
+      await threaded.lintFiles([big]);
+
+      assert.strictEqual(mock._calls.length, 1);
+    } finally {
+      await threaded.cleanup();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
