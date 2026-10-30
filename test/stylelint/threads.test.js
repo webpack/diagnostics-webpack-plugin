@@ -83,6 +83,28 @@ describe("Threading", () => {
     }
   });
 
+  it("should bring back what the pool found in a big batch", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "stylelint-pool-"));
+    const big = toPosixPath(join(dir, "big.scss"));
+
+    writeFileSync(big, `/* ${"x".repeat(3 * 1024 * 1024)} */\na { }\n`);
+
+    const threaded = getLoadedStylelint("pooled-results", {
+      threads: 2,
+      config: { rules: { "block-no-empty": true } },
+    });
+
+    try {
+      const [result] = await threaded.lintFiles([big]);
+
+      assert.strictEqual(result.errored, true);
+      assert.strictEqual(result.warnings[0].rule, "block-no-empty");
+    } finally {
+      await threaded.cleanup();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("should lint a big batch on webpack's thread when its options cannot reach a worker", async () => {
     const dir = mkdtempSync(join(tmpdir(), "stylelint-pool-"));
     const big = toPosixPath(join(dir, "big.scss"));
