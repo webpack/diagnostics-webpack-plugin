@@ -168,7 +168,7 @@ describe("incremental", () => {
      * @param {object} options plugin options
      * @param {(files: string[]) => void} check what to say of what the rebuild linted
      * @param {() => void} done done
-     * @param {() => void} edit what changes once the first build is over
+     * @param {() => void | Promise<void>} edit what changes once the first build is over
      */
     const rebuild = (
       options,
@@ -177,6 +177,7 @@ describe("incremental", () => {
       edit = () => writeFileSync(leaf, "const leaf = 2;\n"),
     ) => {
       let first = true;
+      let edited = false;
 
       watch = pack("watch", { eslintPath, ...options }).watch({}, (err) => {
         assert.strictEqual(err, null);
@@ -185,7 +186,18 @@ describe("incremental", () => {
           first = false;
           require(eslintPath)._reset();
           require(eslintPath)._readAcrossFiles(true);
-          edit();
+          Promise.resolve(edit()).then(() => {
+            edited = true;
+          });
+
+          return;
+        }
+
+        // A rebuild before the edit is not the one under test: on Windows,
+        // webpack's watcher reads the fixtures just written as changed.
+        if (!edited) {
+          require(eslintPath)._reset();
+          require(eslintPath)._readAcrossFiles(true);
 
           return;
         }
@@ -240,12 +252,15 @@ describe("incremental", () => {
         // the files held as the watch started has been read, which a change
         // made before then would be read as.
         () =>
-          setTimeout(() => {
-            writeFileSync(
-              faceLeaf,
-              "export function leaf(): number {\n  return 2;\n}\n",
-            );
-          }, 1000),
+          new Promise((resolve) => {
+            setTimeout(() => {
+              writeFileSync(
+                faceLeaf,
+                "export function leaf(): number {\n  return 2;\n}\n",
+              );
+              resolve();
+            }, 1000);
+          }),
       );
     });
 
