@@ -5,7 +5,7 @@ import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { getGraph, hashOf, signatures } from "../import-graph.js";
+import { createSigner, getGraph, hashOf } from "../import-graph.js";
 import { openStore, saveStore } from "../result-store.js";
 import { countThreads, createPool } from "../threads.js";
 import { omitPluginOptions, toPosixPath } from "../utils.js";
@@ -387,8 +387,9 @@ async function create({ key, id, options, compilation }) {
   let across;
   /**
    * Under typed linting, where ESLint's own cache cannot answer: the import
-   * graph each file's results are kept against, and where they are kept.
-   * @type {{ graph: import("../import-graph.js").Graph, store: import("../result-store.js").Store } | undefined}
+   * graph each file's results are kept against, where they are kept, and what
+   * signs the files of this build's batches.
+   * @type {{ graph: import("../import-graph.js").Graph, store: import("../result-store.js").Store, sign: (files: string[]) => Map<string, string> } | undefined}
    */
   let remembered;
 
@@ -424,7 +425,11 @@ async function create({ key, id, options, compilation }) {
       : undefined;
 
     if (graph) {
-      remembered = { graph, store: openStore(resultsPathFor(eslintOptions)) };
+      remembered = {
+        graph,
+        store: openStore(resultsPathFor(eslintOptions)),
+        sign: createSigner(graph),
+      };
       eslintOptions.cache = false;
       changed = true;
     } else if (cacheIsOurs) {
@@ -502,12 +507,12 @@ async function create({ key, id, options, compilation }) {
   /**
    * Answers for what was linted before under the same everything from what
    * was found then, and lints the rest.
-   * @param {NonNullable<typeof remembered>} kept the graph and the store
+   * @param {NonNullable<typeof remembered>} kept the graph, the store and the signer
    * @param {string[]} files the files to lint
    * @returns {Promise<{ found: LintResult[], linted: LintResult[] }>} every result, and the ones linted now
    */
-  const lintRemembered = async ({ graph, store }, files) => {
-    const signed = signatures(graph, files);
+  const lintRemembered = async ({ store, sign }, files) => {
+    const signed = sign(files);
     /** @type {Map<string, string>} */
     const keys = new Map();
     /** @type {LintResult[]} */
