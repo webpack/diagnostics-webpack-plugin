@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import {
   affectedFiles,
   createGraph,
+  createSigner,
   getGraph,
   keepTexts,
   signatures,
@@ -713,6 +714,73 @@ describe("signatures", () => {
     write("top.ts", 'import { m } from "./middle";\nexport const t = 2;\n');
 
     assert.deepStrictEqual(changed(before, sign()), ["top.ts"]);
+  });
+
+  it("should read the config file once however many batches a build signs", () => {
+    let reads = 0;
+    const counted = createGraph({
+      ...ts,
+      sys: {
+        ...ts.sys,
+        readFile: (file, encoding) => {
+          if (file.endsWith("tsconfig.json")) reads += 1;
+
+          return ts.sys.readFile(file, encoding);
+        },
+      },
+    });
+    const sign = createSigner(counted);
+
+    sign([at(names[0])]);
+
+    const once = reads;
+
+    for (const name of names.slice(1)) sign([at(name)]);
+
+    assert.ok(once > 0);
+    assert.strictEqual(reads, once);
+  });
+
+  it("should read nothing again when a later batch reaches another config file", () => {
+    mkdirSync(at("a"));
+    mkdirSync(at("b"));
+    write("a/tsconfig.json", "{}");
+    write("b/tsconfig.json", "{}");
+    write("a/one.ts", "export const one = 1;\n");
+    write("b/two.ts", "export const two = 2;\n");
+
+    /** @type {Map<string, number>} */
+    const reads = new Map();
+    const counted = createGraph({
+      ...ts,
+      sys: {
+        ...ts.sys,
+        readFile: (file, encoding) => {
+          reads.set(file, (reads.get(file) || 0) + 1);
+
+          return ts.sys.readFile(file, encoding);
+        },
+      },
+    });
+    const sign = createSigner(counted);
+
+    sign([at("a/one.ts")]);
+    sign([at("b/two.ts")]);
+
+    assert.strictEqual(reads.get(toPosixPath(at("a/one.ts"))), 1);
+    assert.strictEqual(reads.get(toPosixPath(at("b/two.ts"))), 1);
+  });
+
+  it("should sign files in batches as it signs them at once", () => {
+    const whole = sign();
+    const sign2 = createSigner(createGraph(ts));
+    const batched = {};
+
+    for (const name of names) {
+      batched[name] = sign2([at(name)]).get(toPosixPath(at(name)));
+    }
+
+    assert.deepStrictEqual(batched, whole);
   });
 
   it("should change once an import that resolved to nothing does", () => {

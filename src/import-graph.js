@@ -624,11 +624,11 @@ function readConfig(graph, config) {
  * files its imports resolve through, and the declaration files and global
  * declarations of the programs they describe, which a file sees without
  * importing them.
- * @param {Graph} graph the graph
  * @param {Map<string, { hash: string, sources: string[] }>} configs the config files as they are now
+ * @param {(file: string) => Read | undefined} read reads a file as it is now
  * @returns {string} what they hold, hashed
  */
-function projectSignature(graph, configs) {
+function projectSignature(configs, read) {
   /** @type {string[]} */
   const parts = [];
 
@@ -640,7 +640,7 @@ function projectSignature(graph, configs) {
 
       if (isPackage(file)) continue;
 
-      const known = readNow(graph, file);
+      const known = read(file);
 
       if (!known) continue;
 
@@ -662,54 +662,56 @@ function projectSignature(graph, configs) {
  * imports however indirectly, and what the whole project sees — so that a
  * result kept for a file is good for as long as this is the same, and no
  * longer. A package is read for when it was installed rather than for what it
- * holds.
+ * holds. One signer answers for one build, which hands it its files in batches:
+ * what it read for one batch is not read again for the next.
  * @param {Graph} graph the graph
- * @param {string[]} files the files to answer for
- * @returns {Map<string, string>} the signature of each of them that can be read, by its posix path
+ * @returns {(files: string[]) => Map<string, string>} the signature of each of the files given that can be read, by its posix path
  */
-function signatures(graph, files) {
+function createSigner(graph) {
   graph.resolutions.clear();
 
-  const wanted = files.map((file) => toPosixPath(resolve(file)));
-
-  // Read first, so that the config files they resolve through are known.
-  for (const file of wanted) readNow(graph, file);
-
+  /**
+   * The files read in this build, whether or not they were there.
+   * @type {Set<string>}
+   */
+  const checked = new Set();
   /** @type {Map<string, { hash: string, sources: string[] }>} */
-  let configs = new Map();
+  const configsRead = new Map();
+  /** @type {{ configs: Map<string, { hash: string, sources: string[] }>, signature: string } | undefined} */
+  let project;
 
-  for (const config of graph.options.keys()) {
-    configs.set(config, readConfig(graph, config));
-  }
+  /**
+   * @param {string} file the file, as a posix path
+   * @returns {Read | undefined} it as it is in this build
+   */
+  const read = (file) => {
+    if (checked.has(file)) return graph.reads.get(file);
 
-  // A config file that changed decides how every import resolves, so what was
-  // read under it is read again, under it as it is now.
-  if (
-    [...configs].some(
-      ([config, { hash }]) => graph.configHashes.get(config) !== hash,
-    ) &&
-    graph.configHashes.size > 0
-  ) {
-    graph.reads.clear();
-    graph.options.clear();
-    graph.configs.clear();
+    checked.add(file);
 
-    for (const file of wanted) readNow(graph, file);
+    return readNow(graph, file);
+  };
 
-    configs = new Map();
+  /**
+   * @returns {Map<string, { hash: string, sources: string[] }>} every config file read so far, as it is in this build
+   */
+  const readConfigs = () => {
+    /** @type {Map<string, { hash: string, sources: string[] }>} */
+    const configs = new Map();
 
     for (const config of graph.options.keys()) {
-      configs.set(config, readConfig(graph, config));
+      let now = configsRead.get(config);
+
+      if (!now) {
+        now = readConfig(graph, config);
+        configsRead.set(config, now);
+      }
+
+      configs.set(config, now);
     }
-  }
 
-  graph.configHashes.clear();
-
-  for (const [config, { hash }] of configs) {
-    graph.configHashes.set(config, hash);
-  }
-
-  const project = projectSignature(graph, configs);
+    return configs;
+  };
   /**
    * What each file says of itself, and what it imports, read once however
    * many of the closures reach it.
@@ -739,17 +741,17 @@ function signatures(graph, files) {
         imports: [],
       };
     } else {
-      const read = readNow(graph, file);
+      const now = read(file);
 
-      described = read
+      described = now
         ? {
             parts: [
-              `${file} ${read.hash}`,
-              ...read.imports.missing.map(
+              `${file} ${now.hash}`,
+              ...now.imports.missing.map(
                 (specifier) => `${file} misses ${specifier}`,
               ),
             ],
-            imports: read.imports.resolved,
+            imports: now.imports.resolved,
           }
         : { parts: [`${file} gone`], imports: [] };
     }
@@ -824,70 +826,141 @@ function signatures(graph, files) {
     for (const member of members) signed.set(member, signature);
   };
 
-  for (const root of wanted) {
-    if (!graph.reads.has(root) || order.has(root)) continue;
+  return (files) => {
+    const wanted = files.map((file) => toPosixPath(resolve(file)));
 
-    enter(root);
+    // Read first, so that the config files they resolve through are known.
+    for (const file of wanted) read(file);
 
-    /** @type {[string, number][]} */
-    const stack = [[root, 0]];
+    let configs = readConfigs();
 
-    while (stack.length > 0) {
-      const frame = stack[stack.length - 1];
-      const [file, next] = frame;
-      const { imports } = describe(file);
+    // A config file that changed decides how every import resolves, so what was
+    // read under it is read again, under it as it is now. One first reached in
+    // this batch has nothing read under it yet.
+    if (
+      [...configs].some(
+        ([config, { hash }]) =>
+          graph.configHashes.has(config) &&
+          graph.configHashes.get(config) !== hash,
+      )
+    ) {
+      graph.reads.clear();
+      graph.options.clear();
+      graph.configs.clear();
+      checked.clear();
+      configsRead.clear();
+      known.clear();
+      signed.clear();
+      order.clear();
+      lowest.clear();
+      project = undefined;
 
-      if (next < imports.length) {
-        const target = imports[next];
+      for (const file of wanted) read(file);
 
-        frame[1] = next + 1;
+      configs = readConfigs();
+    }
 
-        if (!order.has(target)) {
-          enter(target);
-          stack.push([target, 0]);
-        } else if (onOpen.has(target)) {
+    graph.configHashes.clear();
+
+    for (const [config, { hash }] of configs) {
+      graph.configHashes.set(config, hash);
+    }
+
+    const kept = project;
+    const current =
+      !kept ||
+      kept.configs.size !== configs.size ||
+      [...configs].some(([config, now]) => kept.configs.get(config) !== now)
+        ? { configs, signature: projectSignature(configs, read) }
+        : kept;
+
+    project = current;
+
+    const projectSigned = current.signature;
+
+    for (const root of wanted) {
+      if (!graph.reads.has(root) || order.has(root)) continue;
+
+      enter(root);
+
+      /** @type {[string, number][]} */
+      const stack = [[root, 0]];
+
+      while (stack.length > 0) {
+        const frame = stack[stack.length - 1];
+        const [file, next] = frame;
+        const { imports } = describe(file);
+
+        if (next < imports.length) {
+          const target = imports[next];
+
+          frame[1] = next + 1;
+
+          if (!order.has(target)) {
+            enter(target);
+            stack.push([target, 0]);
+          } else if (onOpen.has(target)) {
+            lowest.set(
+              file,
+              Math.min(
+                /** @type {number} */ (lowest.get(file)),
+                /** @type {number} */ (order.get(target)),
+              ),
+            );
+          }
+
+          continue;
+        }
+
+        stack.pop();
+
+        if (stack.length > 0) {
+          const [parent] = stack[stack.length - 1];
+
           lowest.set(
-            file,
+            parent,
             Math.min(
+              /** @type {number} */ (lowest.get(parent)),
               /** @type {number} */ (lowest.get(file)),
-              /** @type {number} */ (order.get(target)),
             ),
           );
         }
 
-        continue;
+        if (lowest.get(file) === order.get(file)) close(file);
       }
+    }
 
-      stack.pop();
+    /** @type {Map<string, string>} */
+    const found = new Map();
 
-      if (stack.length > 0) {
-        const [parent] = stack[stack.length - 1];
+    for (const file of wanted) {
+      const signature = signed.get(file);
 
-        lowest.set(
-          parent,
-          Math.min(
-            /** @type {number} */ (lowest.get(parent)),
-            /** @type {number} */ (lowest.get(file)),
-          ),
-        );
+      if (signature !== undefined) {
+        found.set(file, hashOf(`${projectSigned}\n${signature}`));
       }
-
-      if (lowest.get(file) === order.get(file)) close(file);
     }
-  }
 
-  /** @type {Map<string, string>} */
-  const found = new Map();
-
-  for (const file of wanted) {
-    const signature = signed.get(file);
-
-    if (signature !== undefined) {
-      found.set(file, hashOf(`${project}\n${signature}`));
-    }
-  }
-
-  return found;
+    return found;
+  };
 }
 
-export { affectedFiles, createGraph, getGraph, hashOf, keepTexts, signatures };
+/**
+ * The signatures of files signed on their own, as one batch of a build.
+ * @param {Graph} graph the graph
+ * @param {string[]} files the files to answer for
+ * @returns {Map<string, string>} the signature of each of them that can be read, by its posix path
+ */
+function signatures(graph, files) {
+  return createSigner(graph)(files);
+}
+
+export {
+  affectedFiles,
+  createGraph,
+  createSigner,
+  getGraph,
+  hashOf,
+  keepTexts,
+  signatures,
+};
