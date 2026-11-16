@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+### Patch Changes
+
+- Accept `stylelint@18` in the optional peer dependency range. (by [@alexander-akait](https://github.com/alexander-akait) in [#402](https://github.com/webpack/diagnostics-webpack-plugin/pull/402))
+
 ## 1.1.3
 
 ### Patch Changes
