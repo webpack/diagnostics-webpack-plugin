@@ -97,7 +97,7 @@
     "postcss-scss": "^4.0.9",
     "prettier": "^3.9.6",
     "schema-utils": "^4.8.0",
-    "stylelint": "^17.15.0",
+    "stylelint": "^18.0.0",
     "typescript": "^6.0.3",
     "typescript7": "npm:typescript@^7.1.0-beta",
     "webpack": "^5.112.0"
@@ -106,7 +106,7 @@
     "@biomejs/biome": "^2.0.0",
     "eslint": "^9.0.0 || ^10.0.0",
     "oxlint": "^1.0.0",
-    "stylelint": "^17.0.0",
+    "stylelint": "^17.0.0 || ^18.0.0",
     "typescript": "^5.0.0 || ^6.0.0 || ^7.1.0-0",
     "webpack": "^5.106.0"
   },
