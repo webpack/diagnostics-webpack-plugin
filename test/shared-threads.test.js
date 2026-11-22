@@ -97,6 +97,23 @@ describe("webpack's shared threads", () => {
     assert.deepStrictEqual(asked, []);
   });
 
+  it("keeps jest-worker while webpack watches", async () => {
+    const { compiler, asked } = stubCompiler();
+    const pool = createPool(
+      eslintEntry,
+      1,
+      ["eslint", { overrideConfigFile: eslintConfig }, true],
+      { ...compiler, watchMode: true },
+    );
+
+    try {
+      assert.strictEqual(pool.shared, false);
+      assert.deepStrictEqual(asked, []);
+    } finally {
+      await pool.end();
+    }
+  });
+
   it("falls back to jest-worker on a webpack without compiler.worker()", async () => {
     const pool = createPool(
       eslintEntry,
