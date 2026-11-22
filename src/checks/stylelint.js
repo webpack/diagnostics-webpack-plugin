@@ -138,9 +138,10 @@ function sizeOf(files) {
  * @param {string} cacheKey the key the loaded stylelint is cached under
  * @param {number} poolSize number of workers
  * @param {Options} options options
+ * @param {import("../threads.js").ThreadsCompiler} compiler the compiler whose threads to use, when it has them
  * @returns {Loaded} loaded stylelint
  */
-function loadStylelintThreaded(cacheKey, poolSize, options) {
+function loadStylelintThreaded(cacheKey, poolSize, options, compiler) {
   const source = fileURLToPath(import.meta.resolve("./stylelint-worker.js"));
   const local = loadStylelint(options);
   /**
@@ -162,15 +163,24 @@ function loadStylelintThreaded(cacheKey, poolSize, options) {
       // Stylelint threads nothing of its own, so the plugin's pool runs it —
       // the same pool every check that cannot thread itself is spread over.
       if (pool === undefined) {
-        pool = createPool(source, poolSize, [
-          options,
-          getStylelintOptions(options),
-        ]);
+        pool = createPool(
+          source,
+          poolSize,
+          [options, getStylelintOptions(options)],
+          compiler,
+        );
       }
 
       return pool ? pool.lintFiles(list) : local.lintFiles(list);
     },
     cleanup: async () => {
+      // webpack's threads outlive the run, so a later batch big enough is
+      // spread over them again; ending the pool only starts a new run.
+      if (pool && pool.shared) {
+        await pool.end();
+        return;
+      }
+
       cache[cacheKey] = local;
       context.lintFiles = (files) => local.lintFiles(files);
 
@@ -229,16 +239,17 @@ async function loadFormatter(stylelint, formatter) {
  * worker pool the previous run started.
  * @param {string | undefined} key a cache key
  * @param {Options} options options
+ * @param {import("../threads.js").ThreadsCompiler} compiler the compiler whose threads to use, when it has them
  * @returns {Loaded} loaded stylelint
  */
-function getLoadedStylelint(key, options) {
+function getLoadedStylelint(key, options, compiler) {
   const cacheKey = getCacheKey(key, options);
   const poolSize = countThreads(options.threads);
 
   if (!cache[cacheKey]) {
     cache[cacheKey] =
       poolSize > 1
-        ? loadStylelintThreaded(cacheKey, poolSize, options)
+        ? loadStylelintThreaded(cacheKey, poolSize, options, compiler)
         : loadStylelint(options);
   }
 
@@ -249,8 +260,8 @@ function getLoadedStylelint(key, options) {
  * @param {CheckContext} context check context
  * @returns {Promise<CheckInstance>} stylelint check
  */
-async function create({ key, options }) {
-  const loaded = getLoadedStylelint(key, options);
+async function create({ key, options, compilation }) {
+  const loaded = getLoadedStylelint(key, options, compilation.compiler);
 
   /** @type {LintResult[]} */
   let lastResults = [];

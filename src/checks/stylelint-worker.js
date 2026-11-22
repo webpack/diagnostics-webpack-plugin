@@ -1,5 +1,7 @@
 import { importFrom } from "../utils.js";
 
+import { forRun } from "./worker-runs.js";
+
 /** @typedef {import("./stylelint.js").LintResult} LintResult */
 /** @typedef {import("./stylelint.js").Reported} Reported */
 /** @typedef {import("./stylelint.js").StylelintOptions} StylelintOptions */
@@ -93,4 +95,28 @@ function lintFiles(files) {
   return own.lintFiles(files);
 }
 
-export { createLinter, getStylelint, lintFiles, setup };
+/** @type {Map<string, { run: number, value: Linter }>} */
+const runs = new Map();
+
+/**
+ * Lints on a thread of webpack's shared pool, which is handed the setup with
+ * each call rather than once at its start.
+ * @param {number} run the run that handed the call over
+ * @param {[Options, Partial<StylelintOptions>]} setupArgs what `setup` is handed on a jest-worker thread
+ * @param {string | string[]} files files
+ * @returns {Promise<Reported[]>} results
+ */
+function lintFilesWith(run, setupArgs, files) {
+  const linter = forRun(runs, run, setupArgs, () => {
+    const [options, stylelintOptions] = setupArgs;
+
+    return createLinter(
+      String(options.stylelintPath || "stylelint"),
+      stylelintOptions,
+    );
+  });
+
+  return linter.lintFiles(files);
+}
+
+export { createLinter, getStylelint, lintFiles, lintFilesWith, setup };

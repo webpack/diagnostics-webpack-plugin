@@ -474,6 +474,7 @@ async function create({ key, id, options, compilation }) {
         // No more workers than there are files for them.
         Math.min(files.length, threads),
         [specifier, eslintOptions, options.configType === "flat"],
+        compilation.compiler,
       );
     }
 

@@ -1,5 +1,7 @@
 import { importFrom } from "../utils.js";
 
+import { forRun } from "./worker-runs.js";
+
 /** @typedef {import("./eslint.js").ESLintClass} ESLintClass */
 /** @typedef {import("./eslint.js").ESLintOptions} ESLintOptions */
 /** @typedef {import("./eslint.js").LintResult} LintResult */
@@ -68,4 +70,26 @@ async function lintFiles(files) {
   return eslint.lintFiles(files);
 }
 
-export { lintFiles, loadESLintClass, setup };
+/** @type {Map<string, { run: number, value: Promise<ESLintInstance> }>} */
+const runs = new Map();
+
+/**
+ * Lints on a thread of webpack's shared pool, which is handed the setup with
+ * each call rather than once at its start.
+ * @param {number} run the run that handed the call over
+ * @param {[string, ESLintOptions, boolean]} setupArgs what `setup` is handed on a jest-worker thread
+ * @param {string[]} files the files to lint
+ * @returns {Promise<LintResult[]>} what eslint found in them
+ */
+async function lintFilesWith(run, setupArgs, files) {
+  const eslint = await forRun(runs, run, setupArgs, async () => {
+    const [path, options, flat] = setupArgs;
+    const ESLint = await loadESLintClass(path, flat);
+
+    return new ESLint(options);
+  });
+
+  return eslint.lintFiles(files);
+}
+
+export { lintFiles, lintFilesWith, loadESLintClass, setup };
